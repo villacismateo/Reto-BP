@@ -1,0 +1,38 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente
+    participant APP as App móvil
+    participant SE as Secure Enclave / StrongBox
+    participant BR as Navegador del sistema
+    participant IdP as IdP OIDC
+    participant GW as API Gateway + authorizer
+    participant BFF as bff-movil
+    participant TRX as svc-transferencias
+    participant FRD as Motor de riesgo antifraude
+    participant DB as Aurora transferencias
+
+    U->>APP: Transferir USD 500 a otro banco
+    APP->>GW: POST /movil/v1/transferencias (Idempotency-Key, DPoP)
+    GW-->>APP: 401 insufficient_user_authentication, acr_values=aal2-tx (RFC 9470)
+    APP->>IdP: POST /par (authorization_details: monto, moneda, destino, Idempotency-Key, acr_values=aal2-tx, max_age=0, client_assertion K_inst, PKCE, DPoP)
+    IdP-->>APP: request_uri
+    APP->>BR: /authorize?request_uri (navegador del sistema)
+    IdP->>BR: Reto K_bind sobre authorization_details
+    BR->>APP: Delegación al autenticador de la app (App Link)
+    APP->>U: Muestra monto y destino + BiometricPrompt
+    U->>SE: Huella / rostro
+    SE-->>APP: Firma con K_bind del reto y de authorization_details (vinculación dinámica)
+    APP->>IdP: Respuesta firmada
+    IdP-->>APP: redirect (App Link HTTPS) con code + state + iss
+    APP->>IdP: POST /token (code, code_verifier, client_assertion K_inst, DPoP)
+    IdP-->>APP: access token (acr=aal2-tx, authorization_details, cnf.jkt)
+    APP->>GW: POST /movil/v1/transferencias (mismo Idempotency-Key, nuevo token, DPoP)
+    GW->>GW: Valida JWT, DPoP (htm, htu, jti), acr y lista de denegación
+    GW->>BFF: Reenvía (VPC Link)
+    BFF->>TRX: POST /v1/transferencias (SC TLS 1.3, JWT)
+    TRX->>TRX: Cuerpo == authorization_details, límites, propiedad de la cuenta
+    TRX->>FRD: Scoring (device fingerprint, geovelocidad, beneficiario nuevo, monto, enfriamiento, riesgo elevado 72 h tras robo)
+    FRD-->>TRX: Permitir / retener para revisión / rechazar
+    TRX->>DB: BEGIN, INSERT transferencia SOLICITADA + idempotencia + outbox, COMMIT
+    TRX-->>BFF: 202 Accepted {id, EN_PROCESO, riel=RPI}
+    BFF-->>APP: 202 "Procesando" (continúa en SQ-05b)

@@ -1,0 +1,39 @@
+%% DC-03b · Estados del authorizer ante falla de la caché (modo degradado, fail-static)
+%% Fuente: docs/04-modelo-c4.md §3.2 (I06, I07, RI04b). Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03b-estados-fail-static.mmd -o png/03b-estados-fail-static.png -s 2 -b white -c mermaid-config.json
+stateDiagram-v2
+  direction LR
+  classDef sano fill:#85BBF0,stroke:#5A9AD0,color:#000
+  classDef degradado fill:#FFE8A3,stroke:#B8860B,color:#000
+  classDef cerrado fill:#C00000,stroke:#7A0000,color:#fff
+
+  [*] --> Arranque
+  Arranque --> Sano: Carga copia desde D08
+  Arranque --> Degradado: D08 caído, carga copia desde D06
+  Arranque --> FailClosed: D08 caído y D06 no responde
+  Sano --> Sano: Refresca copia cada 15-30 s
+  Sano --> Degradado: Cae D08 (RI05)
+  Degradado --> Sano: D08 se recupera
+  Degradado --> FailClosed: 15 min sin caché, expira el modo (RI07)
+  FailClosed --> Sano: D08 se recupera
+
+  state "Sano" as Sano
+  state "Degradado (≤ 15 min)" as Degradado
+  state "Fail-closed total" as FailClosed
+
+  note right of Sano
+    Lista de denegación en memoria
+    Operaciones monetarias y lecturas normales
+  end note
+  note right of Degradado
+    Monetarias fail-closed
+    Lecturas sin jti (iat ≤ 60 s, token ≤ 5 min)
+    Alerta auth.degraded_mode al SOC
+  end note
+  note right of FailClosed
+    Todas las solicitudes rechazadas
+    Se requiere restablecer la caché
+  end note
+
+  class Sano sano
+  class Degradado degradado
+  class FailClosed cerrado

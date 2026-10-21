@@ -1,0 +1,101 @@
+---
+title: "DC-03b · Componentes: autorización de canal y dispositivos · v1.0 · 2026-10-20"
+---
+%% DC-03b · Componentes: autorización de canal y dispositivos (nivel 3 C4)
+%% Fuente: docs/04-modelo-c4.md §3.2. Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03b-componentes-autorizacion-dispositivos.mmd -o png/03b-componentes-autorizacion-dispositivos.png -w 2000 -s 2 -b white -c mermaid-config.json
+flowchart TB
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+  classDef nota fill:#FFF8E1,stroke:#B8860B,color:#000,font-size:16px
+
+  APP["<b>App móvil</b><br/>[Contenedor: Flutter + módulo nativo]<br/>K_inst y K_bind, DPoP"]:::vecino
+
+  subgraph AUT["<b>Lambda authorizer</b> [Contenedor: AWS Lambda]"]
+    direction LR
+    I01["<b>ClasificadorRuta</b><br/>[Componente: Lambda]<br/>Marca ruta monetaria"]:::comp
+    I02["<b>ValidadorJwt</b><br/>[Componente: JOSE]<br/>Firma y claims"]:::comp
+    I03["<b>VerificadorDpop</b><br/>[Componente: RFC 9449]<br/><i>«Sender constraint»</i><br/>Prueba DPoP y jti"]:::comp
+    I04["<b>VerificadorAcr</b><br/>[Componente: RFC 9470]<br/><i>«Step-up»</i><br/>Exige acr por ruta"]:::comp
+    I05["<b>ConsultorListaDenegacion</b><br/>[Componente: Cliente Valkey]<br/>Rechaza cliente o jkt"]:::comp
+    I06["<b>CopiaLocalListaDenegacion</b><br/>[Componente: Memoria Lambda]<br/><i>«Fail-static»</i><br/>Refresco cada 15-30 s"]:::comp
+    I07["<b>ControladorModoDegradado</b><br/>[Componente: Temporizador]<br/><i>«Circuit Breaker»</i><br/>Emite modo degradado"]:::comp
+    NOTA["<b>Estados</b><br/>Sano, Degradado 15 min, Fail-closed"]:::nota
+  end
+
+  subgraph BFF["<b>bff-movil</b> [Contenedor: Spring Boot]"]
+    direction LR
+    I08["<b>RegistroController</b><br/>[Componente: Spring Web]<br/><i>«BFF»</i><br/>Alta y revocación"]:::comp
+    I09["<b>VerificadorAtestacion</b><br/>[Componente: App Attest]<br/><i>«Adapter»</i><br/>Atestación del dispositivo"]:::comp
+    I10["<b>RegistradorDcr</b><br/>[Componente: RFC 7591]<br/><i>«Adapter»</i><br/>Registra instancia en IdP"]:::comp
+    I11["<b>GestorSesionMovil</b><br/>[Componente: Spring + Valkey]<br/>Cierra sesión por inactividad"]:::comp
+    I12["<b>ClienteDispositivosResiliente</b><br/>[Componente: Resilience4j]<br/><i>«Circuit Breaker»</i><br/>Llama a svc-dispositivos"]:::comp
+  end
+
+  subgraph SVC["<b>svc-dispositivos</b> [Contenedor: Spring Boot]"]
+    direction LR
+    I13["<b>DispositivosController</b><br/>[Componente: Spring Web]<br/>Alta, listado, revocación"]:::comp
+    I14["<b>PoliticaDispositivos</b><br/>[Componente: Java dominio]<br/><i>«Domain Model»</i><br/>Máx. 3 activos, 24 h"]:::comp
+    I15["<b>RevocarInstanciaUseCase</b><br/>[Componente: Java aplicación]<br/>Orquesta la revocación"]:::comp
+    I16["<b>RepositorioDispositivos</b><br/>[Componente: DynamoDB SDK]<br/><i>«Repository»</i><br/>Persiste instancias y jkt"]:::comp
+    I17["<b>PublicadorListaDenegacion</b><br/>[Componente: Cliente Valkey]<br/>Publica client_id y jkt"]:::comp
+    I18["<b>AdaptadorAdminIdp</b><br/>[Componente: HTTP]<br/><i>«Adapter»</i><br/>Borra cliente, revoca refresh"]:::comp
+    I19["<b>JobHigieneInstancias</b><br/>[Componente: EventBridge Scheduler]<br/>Revoca instancias inactivas"]:::comp
+  end
+
+  D06[("<b>dispositivos</b><br/>[Base de datos: DynamoDB]<br/>Fuente de verdad")]:::datos
+  D08[("<b>Caché de seguridad</b><br/>[Base de datos: Valkey]<br/>Denegación, jti, sesiones")]:::datos
+  Q01["<b>Bus bp-dominio</b><br/>[Cola: EventBridge]<br/>Eventos auth.device.*"]:::cont
+  Q06["<b>Stream auditoría</b><br/>[Stream: Kinesis]<br/>Eventos de instancias"]:::cont
+  C27["<b>Observabilidad</b><br/>[Gestionado: CloudWatch]<br/>Alarma P1 al SOC"]:::gestionado
+  X03["<b>IdP de BP</b><br/>[Sistema existente: OIDC]<br/>Registro y revocación"]:::existente
+  X11["<b>Apple y Google</b><br/>[Sistema externo: HTTPS]<br/>Atestación del dispositivo"]:::vecino
+
+  APP -->|"Envía DPoP · HTTPS"| I01
+  I01 -->|"encadena"| I02
+  I02 -->|"encadena"| I03
+  I03 -->|"encadena"| I04
+  I04 -->|"encadena"| I05
+  I05 -->|"Consulta denegación · Valkey TLS"| D08
+  I06 -->|"Refresca copia · Valkey TLS"| D08
+  I06 -->|"Carga lista si D08 falla · VPCE"| D06
+  I05 -->|"Informa falla de D08"| I07
+  I07 -->|"Usa última copia"| I06
+  I07 -.->|"Emite modo degradado · EMF"| C27
+  APP -->|"Solicita alta con atestación · HTTPS"| I08
+  I08 -->|"Delega verificación"| I09
+  I09 -->|"Verifica atestación · HTTPS"| X11
+  I08 -->|"Pide alta o revocación · JWT + DPoP"| I12
+  I12 -->|"Invoca servicio · JWT + DPoP"| I13
+  I13 -->|"Aplica política"| I14
+  I08 -->|"Delega registro"| I10
+  I10 -->|"Registra instancia · DCR"| X03
+  I13 -->|"Ejecuta revocación"| I15
+  I15 -->|"Marca revocada"| I16
+  I16 -->|"Escribe estado · VPCE"| D06
+  I15 -->|"Delega denegación"| I17
+  I17 -->|"Agrega client_id y jkt · Valkey"| D08
+  I15 -->|"Delega borrado"| I18
+  I18 -->|"Borra cliente, revoca refresh"| X03
+  D06 -.->|"Publica revocado · CloudEvents"| Q01
+  I15 -.->|"Audita revocación · Kinesis"| Q06
+  I05 -.->|"Audita rechazos · Kinesis"| Q06
+  I19 -.->|"Revoca por inactividad"| I15
+  I11 -->|"Lee y escribe inactividad · Valkey"| D08
+  I07 ~~~ NOTA
+
+  subgraph LEG["Leyenda"]
+    direction LR
+    LC1["Componente propio"]:::comp
+    LC2["Contenedor / cola"]:::cont
+    LC3[("Base de datos")]:::datos
+    LC4["Vecino"]:::vecino
+    LC5["Sistema existente BP"]:::existente
+    LC6["Gestionado AWS"]:::gestionado
+    LF1["── síncrona · - - asíncrona · rojo: revocación"]
+  end
+
+  linkStyle 23,25 stroke:#C00000,stroke-width:3px,color:#C00000

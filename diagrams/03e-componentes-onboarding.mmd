@@ -1,0 +1,87 @@
+---
+title: DC-03e · Componentes · svc-onboarding (alta digital con reconocimiento facial) · v1.0 · 2026-10-20
+---
+%% DC-03e · Fuente: docs/04-modelo-c4.md §3.5 (13 componentes O01–O13, 10 vecinos, 18 relaciones RO01–RO18). Coherente con ADR-008 y SQ-04.
+%% Render (desde diagrams): npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03e-componentes-onboarding.mmd -o png/03e-componentes-onboarding.png -w 2000 -s 2 -b white -c mermaid-config.json
+%% Colores = paleta C4 (plantilla c4-componentes-plantilla.mmd). Sólida = síncrona (-->), discontinua = asíncrona (-.->).
+flowchart LR
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+
+  X01["<b>App móvil + SDK IDV</b><br/>[Contenedor: Flutter + módulo nativo]<br/>Captura cédula y selfie;<br/>llave no exportable"]:::vecino
+  X02["<b>bff-movil</b><br/>[Contenedor: Spring Boot]<br/>Valida atestación;<br/>registra la instancia (DCR)"]:::vecino
+
+  subgraph ONB["svc-onboarding [Contenedor: Java 21 · Spring Boot · ECS Fargate]  ·  bounded context Identidad"]
+    direction TB
+    subgraph ENT["Entrada y caso de uso"]
+      direction LR
+      O01["<b>OnboardingController</b><br/>[Componente: Spring Web]<br/><i>«Puerto de entrada»</i><br/>Crea expediente, recibe capturas"]:::comp
+      O02["<b>FiltroSeguridad</b><br/>[Componente: Spring Security]<br/><i>«Zero trust»</i><br/>JWT del BFF + atestación + consentimiento"]:::comp
+      O03["<b>GestionarExpedienteUseCase</b><br/>[Componente: Java]<br/><i>«Process Manager / Saga»</i><br/>Máquina de estados del expediente"]:::comp
+      O04["<b>MotorDecision</b><br/>[Componente: Java]<br/><i>«Strategy»</i><br/>Umbrales FAR ≤ 0,01 %, riesgo,<br/>escalamiento adaptativo"]:::comp
+    end
+    subgraph PUE["Puertos y adaptadores de salida"]
+      direction LR
+      O05["<b>AdaptadorIdvFacePhi</b><br/>[Componente: cliente HTTPS]<br/><i>«Adapter + Circuit Breaker»</i><br/>Documento, liveness, 1:1"]:::comp
+      O06["<b>AdaptadorLivenessAlterno</b><br/>[Componente: AWS SDK]<br/><i>«Fallback»</i><br/>Motor alterno de liveness"]:::comp
+      O07["<b>AdaptadorRegistroCivil</b><br/>[Componente: cliente SOAP]<br/><i>«Anti-Corruption Layer»</i><br/>Demográfico + biométrico"]:::comp
+      O08["<b>AdaptadorKycAml</b><br/>[Componente: cliente HTTPS]<br/><i>«Adapter»</i><br/>Listas restrictivas y PEP"]:::comp
+      O09["<b>AdaptadorAdminIdP</b><br/>[Componente: cliente SCIM]<br/><i>«Adapter»</i><br/>Alta pendiente_credenciales;<br/>compensa si no termina"]:::comp
+      O10["<b>EmisorComprobante</b><br/>[Componente: Java + KMS Sign]<br/>JWT firmado, 5 min, uso único,<br/>ligado al jkt del dispositivo"]:::comp
+    end
+    subgraph PER["Persistencia y eventos"]
+      direction LR
+      O11["<b>RepositorioExpedientes</b><br/>[Componente: Spring Data JPA]<br/><i>«Repository»</i><br/>Expediente, estados, jti usados"]:::comp
+      O12["<b>BovedaEvidencias</b><br/>[Componente: AWS SDK S3]<br/><i>«Claim Check»</i><br/>Evidencia KYC mínima cifrada"]:::comp
+      O13["<b>PublicadorEventos</b><br/>[Componente: relay de outbox]<br/><i>«Transactional Outbox»</i><br/>onboarding.* sin imágenes"]:::comp
+    end
+  end
+
+  X03["<b>Proveedor IDV · FacePhi</b><br/>[Sistema externo: SaaS / regional]<br/>PAD ISO/IEC 30107-3 nivel 2"]:::existente
+  X04["<b>Rekognition Face Liveness</b><br/>[Gestionado AWS]<br/>Motor alterno"]:::gestionado
+  X05["<b>Registro Civil (DIGERCIC)</b><br/>[Sistema externo]<br/>Convenio interinstitucional<br/>(protocolo a confirmar)"]:::existente
+  X06["<b>Listas KYC/AML</b><br/>[Sistema externo]"]:::existente
+  X07["<b>IdP OIDC de BP</b><br/>[Sistema BP existente]<br/>Alta de usuario, DCR,<br/>clave y passkey"]:::existente
+  D01[("<b>BD onboarding</b><br/>[Base: Aurora PostgreSQL<br/>clúster plataforma]<br/>Expedientes + outbox")]:::datos
+  D02[("<b>kyc-evidencias</b><br/>[Base: S3 + KMS dedicada<br/>+ Macie]<br/>Imágenes y puntuaciones")]:::datos
+  Q01["<b>Bus bp-dominio + stream auditoria</b><br/>[EventBridge + Kinesis]<br/>Eventos y auditoría inmutable"]:::cont
+
+  X01 -->|"RO01 · envía capturas cifradas · HTTPS TLS 1.3 + DPoP"| X02
+  X02 -->|"RO02 · crea expediente / adjunta capturas · Service Connect TLS + JWT"| O01
+  O01 -->|"RO03 · autoriza · en proceso"| O02
+  O02 -->|"RO03 · ejecuta · en proceso"| O03
+  O03 -->|"RO04 · evalúa · en proceso"| O04
+  O03 -->|"RO05 · verifica documento y rostro · en proceso"| O05
+  O05 -->|"RO06 · documento, liveness e inyección · HTTPS mTLS por egress"| X03
+  O05 -.->|"RO07 · si el circuito abre · en proceso"| O06
+  O06 -->|"RO08 · liveness alterno · AWS SDK SigV4"| X04
+  O03 -->|"RO09 · consulta fuente oficial · en proceso"| O07
+  O07 -->|"RO10 · cédula + selfie · SOAP/HTTPS por convenio"| X05
+  O03 -->|"RO11 · cribado · en proceso"| O08
+  O08 -->|"RO12 · consulta listas · HTTPS"| X06
+  O03 -->|"RO13 · alta del usuario aprobado · en proceso"| O09
+  O09 -->|"RO14 · crea usuario pendiente_credenciales · SCIM/HTTPS + client credentials"| X07
+  O03 -->|"RO15 · emite comprobante · en proceso"| O10
+  X07 -->|"RO16 · valida comprobante al registrar la instancia (DCR) · HTTPS mTLS"| O10
+  O03 -->|"RO17 · guarda estado · JDBC TLS + IAM"| O11
+  O11 --> D01
+  O03 -->|"RO17 · guarda evidencia · S3 VPCE + SSE-KMS"| O12
+  O12 --> D02
+  O11 -.->|"RO18 · outbox · misma transacción"| O13
+  O13 -.->|"RO18 · publica onboarding.* · EventBridge/Kinesis IAM"| Q01
+
+  subgraph LEG["Leyenda"]
+    direction LR
+    L1["Componente (propio)"]:::comp
+    L2["Contenedor / cola"]:::cont
+    L3[("Base de datos")]:::datos
+    L4["Contenedor vecino"]:::vecino
+    L5["Sistema externo o de BP"]:::existente
+    L6["Servicio gestionado AWS"]:::gestionado
+    L7["Flecha sólida = síncrona · discontinua = asíncrona"]:::vecino
+    L1 ~~~ L2 ~~~ L3 ~~~ L4 ~~~ L5 ~~~ L6 ~~~ L7
+  end

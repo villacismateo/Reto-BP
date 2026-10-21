@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    actor C as Cliente
+    participant D2 as Dispositivo 2 (enrolado)
+    participant GW as API Gateway (authorizer)
+    participant BFFM as bff-movil → svc-dispositivos (§10 del documento 03)
+    participant IdP as IdP OIDC
+    participant DL as Lista de denegación (ElastiCache)
+    participant NOT as Notificaciones (ADR-010)
+    participant AUD as Auditoría (ADR-012)
+    participant D3 as Teléfono robado
+
+    C->>D2: Mis dispositivos → "Reportar robo" (teléfono 3)
+    D2->>C: BiometricPrompt (step-up)
+    C->>D2: Huella / rostro
+    D2->>GW: POST /movil/v1/dispositivos/{inst3}/revocar (DPoP + firma K_bind de D2)
+    GW->>BFFM: Reenvía (JWT, DPoP y lista de denegación validados)
+    BFFM->>BFFM: Valida step-up y que inst3 pertenece al sub
+    par Revocación en paralelo
+        BFFM->>DL: Agregar client_id y jkt de inst3
+        BFFM->>IdP: Borrar cliente inst3 (RFC 7592) + revocar refresh (RFC 7009)
+        BFFM->>IdP: Eliminar K_bind pública de inst3 del perfil
+        BFFM->>NOT: Borrar token push de inst3
+    end
+    IdP-->>BFFM: Confirmado (backchannel logout)
+    BFFM--)AUD: device.reported_stolen, auth.client_instance.revoked, auth.device.revoked
+    BFFM->>NOT: Avisar revocación (correo + SMS + push a D2)
+    NOT--)C: "Dispositivo revocado a las HH:MM"
+    BFFM-->>D2: 200 Revocado (D2 y D1 siguen operando)
+
+    D3->>GW: GET /movil/v1/cuentas con access token aún no vencido
+    GW->>DL: ¿client_id/jkt en lista?
+    DL-->>GW: Sí
+    GW-->>D3: 401 instance_revoked
+    GW--)AUD: auth.request.rejected_revoked
+    D3->>D3: La app borra datos locales y llaves

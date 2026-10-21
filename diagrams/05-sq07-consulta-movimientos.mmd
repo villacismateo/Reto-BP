@@ -1,0 +1,36 @@
+sequenceDiagram
+    autonumber
+    participant APP as App / SPA
+    participant GW as API Gateway
+    participant BFF as BFF
+    participant CTA as svc-cuentas
+    participant VK as ElastiCache datos
+    participant DDB as DynamoDB movimientos
+    participant ACL as acl-core
+    participant CORE as Core
+    participant TRX as svc-transferencias
+
+    APP->>GW: GET /movil/v1 o /web/v1/cuentas/{idTok}/movimientos?pagina=1 (se muestra ****1234)
+    GW->>BFF: Reenvía (móvil: JWT + DPoP validados, web: cookie + anti-CSRF)
+    par Composición
+        BFF->>CTA: GET /v1/cuentas/{idTok}/movimientos (SC TLS 1.3, JWT, + prueba DPoP desde bff-web)
+        BFF->>TRX: GET operaciones en curso
+    end
+    CTA->>CTA: Verifica que la cuenta pertenece al sub
+    CTA->>VK: GET cta:{idTok}:mov:p1 (id tokenizado, nunca el número en claro)
+    alt Hit
+        VK-->>CTA: Página 1
+    else Miss y CDC al día (lag ≤ 60 s)
+        CTA->>DDB: Query PK=cuenta, SK desc, límite 20
+        DDB-->>CTA: Página 1
+        CTA->>VK: SET con TTL (5 min frecuente / 2 min resto)
+    else Miss y CDC atrasado (circuito abierto)
+        CTA->>ACL: Primera página (rate limiter, bulkhead de consultas)
+        ACL->>CORE: Consulta (mTLS sobre IPsec-DX)
+        CORE-->>ACL: Movimientos
+        ACL-->>CTA: Movimientos (marca de frescura)
+    end
+    CTA-->>BFF: Movimientos
+    TRX-->>BFF: Operaciones en curso
+    BFF-->>APP: Lista fusionada (read-your-writes)
+    Note over DDB,VK: Asíncrono: MovimientoRegistrado (Streams → Pipes → EventBridge → SQS) → InvalidadorPorEventos borra cta:{idTok}:mov:p1

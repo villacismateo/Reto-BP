@@ -1,0 +1,70 @@
+---
+title: "DC-02d · Contenedores: eventos, notificaciones y auditoría · v1.0 · 2026-10-20"
+---
+%% DC-02d · Fuente: docs/04-modelo-c4.md §2 (R52-R55, R64-R69). Plantilla: c4-componentes-plantilla.mmd
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 02d-contenedores-eventos-notificaciones-auditoria.mmd -o png/02d-contenedores-eventos-notificaciones-auditoria.png -w 2000 -s 2 -b white -c mermaid-config.json
+flowchart TB
+  classDef persona fill:#08427B,stroke:#062F59,color:#fff,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef pie fill:#ffffff,stroke:#8AA8C8,color:#000,font-size:16px
+
+  subgraph VEC["Vecinos de otras láminas"]
+    C06["<b>C06 Lambda authorizer</b><br/>[Contenedor · ver 02a]"]:::vecino
+    C09["<b>C09 svc-clientes</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C10["<b>C10 svc-cuentas</b><br/>[Contenedor · ver 02b]"]:::vecino
+    SRV["<b>Dominio y BFF</b><br/>[Servicios que emiten auditoría · ver 02a, 02b]"]:::vecino
+  end
+
+  subgraph B6["B6 Plataforma de eventos (cuenta prod)"]
+    Q01["<b>Q01 Bus bp-dominio</b><br/>[Cola: EventBridge · schema registry · Pipes]<br/>Eventos de dominio CloudEvents 1.0"]:::gestionado
+    Q02["<b>Q02 Colas de consumidores</b><br/>[Cola: SQS + DLQ por consumidor]<br/>Nivela la carga de cada consumidor"]:::gestionado
+  end
+
+  subgraph B8["B3 Notificaciones (dominio)"]
+    C15["<b>C15 svc-notificaciones</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>Envío multicanal con proveedor alterno"]:::cont
+    D05[("<b>D05 Tablas notificaciones y preferencias</b><br/>[Base de datos: DynamoDB]<br/>Estado de entregas y canales")]:::datos
+  end
+
+  subgraph B7["B7 Auditoría (cuenta prod)"]
+    Q06["<b>Q06 Stream auditoria</b><br/>[Cola: Kinesis Data Streams · partición = cliente]<br/>Ingesta de eventos de auditoría"]:::gestionado
+    C21["<b>C21 svc-auditoria</b><br/>[Contenedor: Java 21 · KCL · ECS]<br/>Valida, minimiza y encadena SHA-256"]:::cont
+    C22["<b>C22 Entrega a S3 (Firehose)</b><br/>[Contenedor gestionado: Amazon Data Firehose · Parquet]<br/>Escribe lotes en el almacén WORM"]:::gestionado
+    C23["<b>C23 Sellador horario</b><br/>[Contenedor gestionado: Lambda + KMS asimétrica]<br/>Firma la raíz Merkle de cada hora"]:::gestionado
+    D10[("<b>D10 Almacén de auditoría</b><br/>[Base de datos: S3 Object Lock 10 años · Glacier Deep Archive]<br/>Registro inmutable (cuenta log-archive)")]:::datos
+    D11[("<b>D11 Sellos Merkle</b><br/>[Base de datos: S3 Object Lock]<br/>Raíces horarias firmadas")]:::datos
+    C24["<b>C24 Consulta de auditoría</b><br/>[Contenedor gestionado: Athena · Glue · Lake Formation]<br/>Consulta con PII enmascarada"]:::gestionado
+  end
+
+  subgraph TRX["Plataforma transversal"]
+    C27["<b>C27 Observabilidad</b><br/>[Contenedor gestionado: ADOT · CloudWatch · X-Ray]<br/>Métricas, logs, trazas y SLO"]:::gestionado
+    C28["<b>C28 Seguridad de plataforma</b><br/>[Contenedor gestionado: KMS · Secrets Manager · GuardDuty]<br/>Llaves, secretos, certificados y detección"]:::gestionado
+  end
+
+  P4["<b>P4 Auditor</b><br/>[Persona]<br/>Consulta la auditoría"]:::persona
+  X12["<b>X12 SIEM / SOC de BP</b><br/>[Sistema existente de BP: integración SIEM]<br/>Recibe hallazgos y alertas"]:::existente
+
+  %% Eventos de dominio
+  Q01 -.->|"Enruta por patrón a la cola de cada consumidor<br/>reglas EventBridge (R52)"| Q02
+  Q02 -.->|"Entrega eventos a notificar<br/>SQS + DLQ (R53)"| C15
+  Q02 -.->|"Entrega invalidación de caché y auth.login.succeeded<br/>SQS + DLQ (R54)"| C09
+  Q02 -.->|"Entrega invalidación de caché<br/>SQS + DLQ (R54)"| C10
+  C15 -->|"Registra el estado de cada envío<br/>VPCE · IAM (R55)"| D05
+
+  %% Auditoría
+  SRV -.->|"Emiten eventos de auditoría (outbox o librería con búfer)<br/>API Kinesis · VPCE · IAM (R64)"| Q06
+  Q06 -.->|"Entrega eventos, partición = cliente<br/>KCL · IAM (R65)"| C21
+  C21 -.->|"Entrega lotes encadenados al almacén WORM<br/>Firehose cross-account · SSE-KMS (R66)"| C22
+  C22 -.->|"Escribe el registro inmutable<br/>Object Lock Compliance (R66)"| D10
+  C23 -.->|"Firma y guarda la raíz Merkle horaria<br/>KMS Sign asimétrica · Object Lock (R67)"| D11
+  P4 -->|"Consulta la auditoría<br/>IAM Identity Center + MFA (R68)"| C24
+  C24 -->|"Lee el registro con PII enmascarada<br/>Lake Formation (R68)"| D10
+
+  %% Seguridad y telemetría hacia SIEM
+  C06 -.->|"Reporta auth.degraded_mode<br/>métrica y alarma P1 → EventBridge → SIEM (R69)"| X12
+  C27 -.->|"Reporta hallazgos de seguridad y alarmas<br/>EventBridge → SIEM (R69)"| X12
+
+  PIE["<b>Leyenda:</b> sólida = síncrona · discontinua = asíncrona · cilindro = datos · borde discontinuo = gestionado AWS · gris = vecino de otra lámina · R## = docs/04-modelo-c4.md §2.2<br/><b>Pie:</b> eventos y auditoría. Todos los contenedores envían telemetría OTLP a C27 (sidecar ADOT) y usan C28 para llaves y secretos. La auditoría termina en S3 con Object Lock en la cuenta log-archive, sellada cada hora"]:::pie

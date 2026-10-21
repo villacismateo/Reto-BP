@@ -1,0 +1,82 @@
+---
+title: "DC-02c · Contenedores: integración on-premise y terceros · v1.0 · 2026-10-20"
+---
+%% DC-02c · Fuente: docs/04-modelo-c4.md §2 (R41-R47, R56-R60, R62). Plantilla: c4-componentes-plantilla.mmd
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 02c-contenedores-integracion-on-prem-y-terceros.mmd -o png/02c-contenedores-integracion-on-prem-y-terceros.png -w 2000 -s 2 -b white -c mermaid-config.json
+flowchart LR
+  classDef persona fill:#08427B,stroke:#062F59,color:#fff,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef pie fill:#ffffff,stroke:#8AA8C8,color:#000,font-size:16px
+
+  subgraph VEC["Vecinos de otras láminas"]
+    C11["<b>C11 svc-cuentas-proyector</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C16["<b>C16 svc-onboarding</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C15["<b>C15 svc-notificaciones</b><br/>[Contenedor · ver 02d]"]:::vecino
+    P1["<b>P1 Cliente persona natural</b><br/>[Persona · ver 02a]"]:::vecino
+  end
+
+  subgraph B4["B4 Integración / ACL"]
+    C18["<b>C18 acl-core</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>ACL al Core, presupuesto de TPS, circuit breaker"]:::cont
+    C19["<b>C19 acl-complementario</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>ACL al complementario, caché 24 h"]:::cont
+    C20["<b>C20 acl-interbancario</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>Estrategias RPI/SPI, ISO 20022"]:::cont
+  end
+
+  subgraph ONP["On-premise BP"]
+    X01["<b>X01 Core bancario</b><br/>[Sistema existente de BP: REST · réplica CDC]<br/>Fuente de verdad"]:::existente
+    X02["<b>X02 Sistema complementario</b><br/>[Sistema existente de BP: REST]<br/>Detalle del cliente"]:::existente
+    X04["<b>X04 Conector de pagos BP</b><br/>[Sistema existente de BP: ISO 20022]<br/>Puerta hacia RPI y SPI"]:::existente
+    X03["<b>X03 IdP OAuth 2.0 / OIDC</b><br/>[Sistema existente: OIDC]<br/>Ver 02a"]:::vecino
+  end
+
+  subgraph CDC["B6 Replicación CDC"]
+    Q05["<b>Q05 Replicación CDC</b><br/>[Contenedor gestionado: AWS DMS Multi-AZ]<br/>Lee el log de la réplica del Core"]:::gestionado
+    Q04["<b>Q04 Stream cdc-movimientos</b><br/>[Cola: Kinesis Data Streams · partición = cuenta]<br/>Cambios del Core en orden por cuenta"]:::gestionado
+  end
+
+  subgraph ENV["B8 Envío gestionado (AWS)"]
+    C25["<b>C25 Amazon SES</b><br/>[Contenedor gestionado: SES]<br/>Canal de correo primario"]:::gestionado
+    C26["<b>C26 End User Messaging</b><br/>[Contenedor gestionado: SMS y push]<br/>SMS primario y push alterno"]:::gestionado
+  end
+
+  subgraph TER["Terceros"]
+    X05["<b>X05 BCE · RPI y SPI</b><br/>[Externo: pacs.008 · pacs.002]<br/>Liquidación interbancaria"]:::vecino
+    X06["<b>X06 Proveedor IDV</b><br/>[Externo: HTTPS API + SDK]<br/>Liveness y comparación 1:1"]:::vecino
+    X07["<b>X07 Registro Civil (DIGERCIC)</b><br/>[Externo: servicio web]<br/>Validación demográfica y biométrica"]:::vecino
+    X08["<b>X08 Listas KYC/AML</b><br/>[Externo: HTTPS API]<br/>Revisión de listas"]:::vecino
+    X09["<b>X09 FCM / APNs</b><br/>[Externo: HTTPS]<br/>Entrega push primaria"]:::vecino
+    X10["<b>X10 Proveedor alterno SMS y correo</b><br/>[Externo: HTTPS API]<br/>Respaldo de notificaciones"]:::vecino
+  end
+
+  %% Integración con el Core y complementario
+  C18 -->|"Consulta y contabiliza en el Core<br/>mTLS sobre IPsec sobre Direct Connect (R41)"| X01
+  C19 -->|"Consulta el detalle<br/>mTLS sobre IPsec-DX o HTTPS por egress (R42)"| X02
+  C20 -.->|"Envía pacs.008 y recibe pacs.002 (callback)<br/>mTLS sobre IPsec-DX · ISO 20022 (R43)"| X04
+  X04 -.->|"Liquida en RPI o SPI<br/>red del BCE, fuera de AWS (R44)"| X05
+
+  %% CDC desde el Core
+  X01 -.->|"Entrega el log transaccional de la réplica<br/>TLS a la BD de la réplica por DX (R45)"| Q05
+  Q05 -.->|"Publica cambios ordenados por cuenta<br/>API Kinesis · VPCE · IAM (R46)"| Q04
+  Q04 -.->|"Entrega cambios al proyector<br/>KCL · IAM (R47)"| C11
+
+  %% Identidad: verificación de identidad y listas
+  C16 -->|"Verifica liveness, identidad y listas<br/>HTTPS TLS 1.2+ · Secrets Manager · lista blanca (R62)"| X06
+  C16 -->|"Consulta registro civil<br/>HTTPS TLS 1.2+ · Secrets Manager (R62)"| X07
+  C16 -->|"Revisa listas KYC/AML<br/>HTTPS TLS 1.2+ · egress lista blanca (R62)"| X08
+
+  %% Notificaciones hacia proveedores (salida de 02d)
+  C15 -->|"Envía push primario<br/>HTTPS TLS 1.3 · egress lista blanca (R58)"| X09
+  C15 -->|"Conmuta al proveedor alterno<br/>HTTPS TLS 1.3 · circuit breaker (R59)"| X10
+
+  %% Notificaciones: canales gestionados y proveedores (R56-R60)
+  C15 -->|"Envía correos<br/>API SES · VPCE (R56)"| C25
+  C15 -->|"Envía SMS y push alterno<br/>API End User Messaging · VPCE (R57)"| C26
+  C25 -.->|"Entrega el correo al cliente (R60)"| P1
+  C26 -.->|"Entrega el SMS o push (R60)"| P1
+  X09 -.->|"Entrega el push (R60)"| P1
+  X10 -.->|"Entrega el aviso alterno (R60)"| P1
+
+  PIE["<b>Leyenda:</b> sólida = síncrona · discontinua = asíncrona · cilindro = datos · borde discontinuo = gestionado AWS · gris = vecino o externo · gris azulado = sistema de BP · R## = docs/04-modelo-c4.md §2.2<br/><b>Pie:</b> integración. Los ACL son la única vía a sistemas de BP y terceros, con mTLS sobre IPsec por Direct Connect. El Core se replica por CDC hacia el proyector de 02b"]:::pie

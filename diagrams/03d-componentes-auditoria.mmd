@@ -1,0 +1,72 @@
+---
+title: DC-03d · Componentes de svc-auditoria · v1.0 · 2026-10-20
+---
+%% DC-03d · Componentes de svc-auditoria. Fuente: docs/04-modelo-c4.md §3.4 y ADR-012.
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03d-componentes-auditoria.mmd -o png/03d-componentes-auditoria.png -s 2 -b white -c mermaid-config.json
+%% Sólida = síncrona (-->), discontinua = asíncrona (-.->). Vecinos en gris.
+flowchart TB
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:16px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:16px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:16px
+  classDef persona fill:#08427B,stroke:#08427B,color:#fff,font-size:16px
+
+  subgraph SP["Servicios productores [Límite: bff-* y svc-*]"]
+    A01["<b>LibreriaAuditoria</b><br/>[Componente: Java]<br/><i>«Transactional Outbox»</i><br/>Audita acciones transaccionales"]:::comp
+  end
+
+  Q06["<b>auditoria</b><br/>[Stream: Kinesis]<br/>Ingesta ordenada por cliente"]:::vecino
+
+  subgraph SA["svc-auditoria [Contenedor: Java 21 · KCL]"]
+    direction LR
+    A02["<b>ConsumidorAuditoria</b><br/>[Componente: KCL]<br/>Lee partición con checkpoint"]:::comp
+    A03["<b>ValidadorEsquema</b><br/>[Componente: Schema registry]<br/><i>«Message Validator»</i><br/>Rechaza eventos inválidos"]:::comp
+    A04["<b>Minimizador</b><br/>[Componente: HMAC · KMS]<br/><i>«Minimización»</i><br/>Seudonimiza sub, enmascara PII"]:::comp
+    A05["<b>EncadenadorHash</b><br/>[Componente: SHA-256]<br/><i>«Event Sourcing»</i><br/>Hash por partición; cabeza con checkpoint"]:::comp
+    A06["<b>PublicadorFirehose</b><br/>[Componente: PutRecordBatch]<br/>Entrega lotes a Firehose"]:::comp
+  end
+
+  Q07["<b>DLQ de auditoría</b><br/>[Cola: SQS]<br/><i>«Dead Letter Channel»</i><br/>Eventos inválidos o fallidos"]:::vecino
+
+  subgraph LA["Cuenta log-archive [Límite: cuenta AWS separada]"]
+    direction LR
+    A07["<b>SelladorMerkle</b><br/>[Componente: Lambda · KMS]<br/><i>«Timestamping»</i><br/>Firma raíz Merkle del período"]:::comp
+    A08["<b>VerificadorIntegridad</b><br/>[Componente: Job diario]<br/>Recalcula cadenas; alarma"]:::comp
+    A09["<b>ConciliadorCompletitud</b><br/>[Componente: Job diario]<br/><i>«Reconciliation»</i><br/>Cruza correlationId; alarma"]:::comp
+    C22["<b>Firehose auditoria</b><br/>[Contenedor gestionado]<br/>Parquet particionado por fecha"]:::vecino
+    D10[("<b>Almacén WORM</b><br/>[Base de datos: S3 Object Lock]<br/>Registro inmutable 10 años")]:::datos
+    D11[("<b>Sellos</b><br/>[Base de datos: S3 Object Lock]<br/>Raíces firmadas")]:::datos
+    C24["<b>Athena · Glue · Lake Formation</b><br/>[Contenedor gestionado]<br/>Consulta con PII enmascarada"]:::vecino
+  end
+
+  P4["<b>Auditor</b><br/>[Persona]<br/>Consulta y descarga evidencias"]:::persona
+
+  %% Asíncronas (discontinuas)
+  A01 -.->|"RA01 · emite eventos<br/>Kinesis · VPCE · IAM"| Q06
+  Q06 -.->|"RA02 · consume<br/>KCL · checkpoint"| A02
+  A02 -.->|"RA02 · valida<br/>interno · en proceso"| A03
+  A03 -.->|"RA02 · minimiza<br/>interno · en proceso"| A04
+  A04 -.->|"RA02 · encadena<br/>interno · en proceso"| A05
+  A05 -.->|"RA02 · entrega<br/>interno · en proceso"| A06
+  A03 -.->|"RA03 · desvía inválidos<br/>SQS · IAM"| Q07
+  A06 -.->|"RA04 · escribe Parquet<br/>Firehose · cross-account"| C22
+  C22 -.->|"RA04 · almacena WORM<br/>SSE-KMS · Object Lock"| D10
+  D10 -.->|"RA10 · replica us-east-2<br/>S3 CRR"| D10
+
+  %% Síncronas (sólidas)
+  A07 --> D10
+  A07 -->|"RA05-RA06 · lee hashes del WORM<br/>y guarda raíz · KMS Sign"| D11
+  A08 --> D10
+  A08 -->|"RA07 · verifica cadenas<br/>y sellos · Athena"| D11
+  A09 -->|"RA08 · concilia<br/>Athena · IAM"| D10
+  P4 -->|"RA09 · consulta registro<br/>IAM IC + MFA"| C24
+  C24 -->|"RA09 · lee datos<br/>Lake Formation"| D10
+
+  subgraph LEG["Leyenda"]
+    direction LR
+    G1["Componente propio"]:::comp
+    G2[("Base de datos")]:::datos
+    G3["Vecino (externo a la lámina)"]:::vecino
+    G4["Persona"]:::persona
+    G5["Flecha sólida = síncrona · discontinua = asíncrona"]
+  end
+  LA ~~~ LEG

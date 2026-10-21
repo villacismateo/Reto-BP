@@ -1,0 +1,23 @@
+# Config local / secretos
+.env
+.env.*
+*.pem
+*.key
+**/terraform.tfstate*
+**/.terraform/
+*.tfvars
+# Build
+poc/**/target/
+poc/**/build/
+node_modules/
+# IDE / SO
+.idea/
+.vscode/
+*.iml
+Thumbs.db
+.DS_Store
+# Temporales de draw.io
+*.drawio.bkp
+__pycache__/
+docs/pdf/*.html
+docs/pdf/faltantes/

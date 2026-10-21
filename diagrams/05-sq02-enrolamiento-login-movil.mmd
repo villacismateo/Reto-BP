@@ -1,0 +1,42 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente
+    participant APP as App móvil
+    participant SE as Secure Enclave / StrongBox
+    participant BR as Navegador del sistema
+    participant GW as API Gateway + authorizer
+    participant BFFM as bff-movil (atestador / registrador)
+    participant IdP as IdP OIDC existente
+    participant NOT as svc-notificaciones
+
+    Note over APP,IdP: Enrolamiento (una vez por instalación, tras onboarding ADR-008 o con step-up de un dispositivo enrolado)
+    APP->>SE: Generar K_inst y K_bind (no exportables, K_bind exige biometría por uso)
+    APP->>GW: POST /movil/v1/instancias: atestación + llaves públicas + comprobante de onboarding (JWT 5 min, uso único, ligado a jkt) o step-up de dispositivo enrolado
+    GW->>BFFM: Reenvía (ruta de registro: WAF, rate limit, sin access token)
+    BFFM->>BFFM: Valida atestación e integridad, valida comprobante/step-up y obtiene sub, pide a svc-dispositivos autorizar el alta (§10 del documento 03)
+    BFFM->>IdP: POST /register (RFC 7591, initial access token, jwks K_inst, private_key_jwt, software_statement)
+    IdP-->>BFFM: client_id de la instancia
+    BFFM-->>APP: client_id de la instancia
+    BFFM--)IdP: Registrar K_bind pública en el perfil del usuario
+    BFFM--)NOT: auth.client_instance.registered → aviso "nuevo dispositivo" por ≥ 2 canales
+
+    Note over APP,IdP: Login
+    U->>APP: Abrir app
+    APP->>SE: Firmar client_assertion y prueba DPoP con K_inst
+    APP->>IdP: POST /par (client_id de instancia, client_assertion, code_challenge S256, DPoP)
+    IdP-->>APP: request_uri
+    APP->>BR: Abrir /authorize?request_uri=... (ASWebAuthenticationSession / Custom Tabs)
+    IdP->>BR: Reto de device binding (o passkey)
+    BR->>APP: Delegación al autenticador de la app (App Link)
+    APP->>U: BiometricPrompt / Face ID
+    U->>SE: Huella / rostro (verificación local)
+    SE-->>APP: Firma del reto con K_bind
+    APP->>IdP: Respuesta firmada
+    IdP-->>APP: redirect (App Link HTTPS) con code + state + iss
+    APP->>IdP: POST /token (code, code_verifier, client_assertion K_inst, DPoP)
+    IdP-->>APP: access token 5 min (cnf.jkt) + refresh token ligado, sin rotación, vida ≤ 30 min
+    APP->>GW: GET /movil/v1/cuentas (Authorization: DPoP token + prueba DPoP)
+    GW->>GW: Valida JWT, acr, DPoP (htm, htu, jti, jkt) y lista de denegación
+    GW->>BFFM: Reenvía (VPC Link)
+    BFFM->>BFFM: Registra actividad (inactividad 2 min)
+    BFFM-->>APP: 200 datos + último ingreso

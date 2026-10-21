@@ -1,0 +1,17 @@
+{
+  "request": { "method": "GET", "urlPathPattern": "/core/cuentas/[0-9]{10}/movimientos" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "fixedDelayMilliseconds": 150,
+    "transformers": ["response-template"],
+    "jsonBody": {
+      "cuenta": "{{request.pathSegments.[2]}}",
+      "movimientos": [
+        { "id": "MOV-001", "fecha": "2026-10-15", "descripcion": "Deposito en efectivo", "monto": 500.00, "tipo": "CREDITO" },
+        { "id": "MOV-002", "fecha": "2026-10-16", "descripcion": "Pago servicio basico", "monto": -42.80, "tipo": "DEBITO" },
+        { "id": "MOV-003", "fecha": "2026-10-17", "descripcion": "Transferencia recibida", "monto": 120.00, "tipo": "CREDITO" }
+      ]
+    }
+  }
+}

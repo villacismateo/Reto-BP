@@ -1,0 +1,48 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente
+    participant DB as Aurora transferencias
+    participant WRK as svc-transferencias-worker
+    participant SFN as Step Functions (saga)
+    participant ACLC as acl-core
+    participant ACLI as acl-interbancario
+    participant BCE as Conector BP → BCE (RPI/SPI)
+    participant EB as EventBridge bp-dominio
+    participant NOT as svc-notificaciones
+    participant AUD as Kinesis auditoría
+
+    Note over DB,WRK: Continúa tras el 202 de SQ-05a (transferencia SOLICITADA + outbox en la misma transacción)
+    WRK->>DB: Lee outbox (SKIP LOCKED)
+    WRK->>SFN: StartExecution(name=id)
+    WRK--)EB: TransferenciaSolicitada
+    WRK--)AUD: transferencia.solicitada
+    SFN->>WRK: Paso 1 (SQS, task token)
+    WRK->>ACLC: Débito ref deb-{id}
+    ACLC->>ACLC: mTLS sobre IPsec-DX al Core
+    ACLC-->>WRK: Debitado
+    WRK--)AUD: transferencia.debitada
+    WRK->>SFN: SendTaskSuccess
+    SFN->>WRK: Paso 2 (SQS, task token, TimeoutSeconds por riel)
+    WRK->>ACLI: Enviar orden {id}
+    alt Riel RPI (tiempo real, ISO 20022)
+        ACLI->>BCE: pacs.008
+        BCE-->>ACLI: pacs.002 (aceptada o rechazada)
+    else Riel SPI (ciclos, formato a confirmar con el BCE)
+        ACLI->>BCE: Orden en el ciclo SPI
+        BCE--)ACLI: Confirmación asíncrona del ciclo
+    end
+    ACLI-->>WRK: Resultado
+    alt Acreditada
+        WRK->>SFN: SendTaskSuccess
+        SFN->>WRK: Paso 3 confirmar
+        WRK->>DB: COMPLETADA + outbox TransferenciaCompletada
+    else Rechazo o timeout sin acreditación (tras consulta activa de estado)
+        WRK->>SFN: SendTaskFailure
+        SFN->>WRK: Compensar
+        WRK->>ACLC: Reverso ref rev-{id} (idempotente)
+        WRK->>DB: REVERSADA + outbox TransferenciaReversada
+    end
+    WRK--)EB: TransferenciaCompletada | TransferenciaReversada
+    EB--)NOT: SQS consumidor
+    NOT--)U: Push + correo o SMS (≥ 2 canales)
+    WRK--)AUD: transferencia.completada | reversada

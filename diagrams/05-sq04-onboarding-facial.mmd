@@ -1,0 +1,63 @@
+sequenceDiagram
+    autonumber
+    actor U as Nuevo cliente
+    participant APP as App móvil + SDK IDV
+    participant SE as Secure Enclave / StrongBox
+    participant GW as API Gateway (ruta anónima)
+    participant BFFM as bff-movil
+    participant ONB as svc-onboarding
+    participant IDV as Proveedor IDV (liveness + 1:1)
+    participant RC as Registro Civil (WS demográfico + biométrico)
+    participant AML as Listas KYC/AML
+    participant ACL as acl-core → Core
+    participant IdP as IdP OIDC existente
+    participant NOT as svc-notificaciones
+    participant AUD as Auditoría (ADR-012)
+
+    U->>APP: Iniciar apertura digital
+    APP->>U: Consentimiento explícito (datos biométricos, LOPDP)
+    U-->>APP: Acepta
+    APP->>SE: Generar K_inst y K_bind (no exportables)
+    APP->>GW: POST /movil/v1/onboarding (atestación, llaves públicas, consentimiento)
+    GW->>BFFM: Reenvía (sin JWT: WAF ACFP, rate limit por IP/dispositivo)
+    BFFM->>BFFM: Valida atestación (App Attest / Play Integrity)
+    BFFM->>ONB: Crear expediente
+    ONB--)AUD: onboarding.consent.granted
+    APP->>U: Capturar cédula (anverso y reverso)
+    APP->>U: Selfie con liveness pasivo (reto activo si hay riesgo)
+    APP->>GW: Envío cifrado de capturas (sesión de onboarding ligada a K_inst)
+    GW->>BFFM: Reenvía (VPC Link)
+    BFFM->>ONB: Capturas + señales del dispositivo
+    ONB->>IDV: Verificar documento, liveness e inyección, 1:1 selfie vs documento
+    IDV-->>ONB: Puntuaciones y datos OCR (servidor a servidor)
+    ONB->>RC: Consulta demográfica + biométrica (cédula, selfie)
+    RC-->>ONB: Coincidencia y estado del ciudadano
+    ONB->>AML: Cribado de listas restrictivas y PEP
+    AML-->>ONB: Resultado
+    ONB->>ONB: Motor de decisión (umbrales, riesgo) → aprobado / revisión / rechazado
+    alt Aprobado
+        ONB->>ACL: Apertura de cuenta en el Core
+        ACL-->>ONB: Cuenta creada
+        ONB->>IdP: Crear usuario (API admin/SCIM) estado pendiente_credenciales
+        ONB-->>APP: Comprobante de verificación firmado (un solo uso, 5 min, ligado a jkt de K_inst)
+        ONB--)AUD: onboarding.identity.created (puntuaciones, sin imágenes)
+    else Revisión
+        ONB->>ONB: Expediente pendiente de revisión humana (nunca aprobación automática)
+        ONB--)NOT: Aviso "solicitud en revisión"
+    else Rechazado
+        ONB--)AUD: onboarding.rejected
+        ONB--)NOT: Aviso de rechazo con canal de atención
+    end
+    APP->>GW: Enrolamiento de instancia (SQ-02, pasos 2-9) autorizado por el comprobante
+    APP->>IdP: PAR (client_id de instancia, client_assertion K_inst, PKCE, DPoP) + /authorize con el comprobante
+    IdP->>ONB: Validar comprobante (firma, uso único, jkt)
+    ONB-->>IdP: Válido
+    U->>IdP: Definir clave (página del IdP)
+    IdP->>APP: Reto de activación del device binding (K_bind)
+    APP->>U: BiometricPrompt / Face ID
+    U->>SE: Huella / rostro
+    SE-->>APP: Firma del reto con K_bind
+    APP->>IdP: Respuesta firmada (device binding activado)
+    IdP-->>APP: code → POST /token (code_verifier, client_assertion K_inst, DPoP) con acr de onboarding verificado
+    IdP--)AUD: onboarding.device.enrolled + auth.login.succeeded
+    ONB--)NOT: onboarding.completed → bienvenida por ≥ 2 canales (push + correo o SMS)

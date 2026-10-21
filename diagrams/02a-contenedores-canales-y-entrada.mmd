@@ -1,0 +1,104 @@
+---
+title: "DC-02a · Contenedores: canales y entrada · v1.0 · 2026-10-20"
+---
+%% DC-02a · Fuente: docs/04-modelo-c4.md §2 (R01-R19, R21-R26, R63). Plantilla: c4-componentes-plantilla.mmd
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 02a-contenedores-canales-y-entrada.mmd -o png/02a-contenedores-canales-y-entrada.png -w 2000 -s 2 -b white -c mermaid-config.json
+%% Sólida = síncrona (-->), discontinua = asíncrona (-.->). Una caja por contenedor. Vecinos de 02b en gris.
+flowchart LR
+  classDef persona fill:#08427B,stroke:#062F59,color:#fff,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef pie fill:#ffffff,stroke:#8AA8C8,color:#000,font-size:16px
+
+  subgraph CLI["Clientes (fuera de AWS)"]
+    direction TB
+    P1["<b>P1 Cliente persona natural</b><br/>[Persona]<br/>Consulta, transfiere y paga"]:::persona
+    P2["<b>P2 Persona que quiere ser cliente</b><br/>[Persona]<br/>Abre su cuenta con su rostro"]:::persona
+    C01["<b>C01 SPA banca web</b><br/>[Contenedor: Angular · Nx]<br/>No guarda tokens, solo cookie"]:::cont
+    C02["<b>C02 App móvil</b><br/>[Contenedor: Flutter + seguridad nativa]<br/>Cliente OAuth por instancia"]:::cont
+  end
+
+  P3["<b>P3 Asesor del centro de contacto</b><br/>[Persona · red corporativa]<br/>Revoca dispositivos robados"]:::persona
+
+  subgraph AWS["AWS · cuenta prod · us-east-1 · 3 AZ"]
+    direction TB
+    subgraph B1["B1 Borde"]
+      direction TB
+      C03["<b>C03 CloudFront · WAF · Shield</b><br/>[Contenedor gestionado: CloudFront]<br/>CDN y protección perimetral"]:::gestionado
+      C04[("<b>C04 Bucket spa-web</b><br/>[Base de datos: S3 · OAC · KMS]<br/>Estáticos de la SPA")]:::datos
+      C05["<b>C05 API Gateway</b><br/>[Contenedor gestionado: API Gateway]<br/>Puerta única, cuotas, enrutado"]:::gestionado
+      C06["<b>C06 Lambda authorizer</b><br/>[Contenedor gestionado: Lambda]<br/>Valida JWT, DPoP, acr y denegación"]:::gestionado
+    end
+    subgraph B2["B2 Canales / BFF"]
+      direction TB
+      C07["<b>C07 bff-web</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>Token handler web (cliente confidencial)"]:::cont
+      C08["<b>C08 bff-movil</b><br/>[Contenedor: Java 21 / Spring Boot · ECS]<br/>Agregación móvil, atestación, DCR"]:::cont
+    end
+    subgraph B5["B5 Datos"]
+      D08[("<b>D08 Caché de seguridad</b><br/>[Base de datos: ElastiCache Valkey]<br/>Sesiones web, jti DPoP, denegación")]:::datos
+    end
+  end
+
+  subgraph ONP["On-premise BP"]
+    X03["<b>X03 IdP OAuth 2.0 / OIDC de BP</b><br/>[Sistema existente: OIDC]<br/>Autentica y emite tokens ligados"]:::existente
+  end
+
+  subgraph TER["Terceros"]
+    X11["<b>X11 App Attest · Play Integrity</b><br/>[Externo: HTTPS]<br/>Verifica la atestación de la app"]:::vecino
+  end
+
+  subgraph VEC["Vecinos de 02b · dominio (ver 02b)"]
+    direction TB
+    C09["<b>C09 svc-clientes</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C10["<b>C10 svc-cuentas</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C12["<b>C12 svc-transferencias</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C16["<b>C16 svc-onboarding</b><br/>[Contenedor · ver 02b]"]:::vecino
+    C17["<b>C17 svc-dispositivos</b><br/>[Contenedor · ver 02b]"]:::vecino
+  end
+
+  %% Entrada de personas y clientes
+  P1 -->|"Usa la banca web<br/>HTTPS (navegador) (R01)"| C01
+  P1 -->|"Usa la app<br/>app instalada (R02)"| C02
+  P2 -->|"Abre su cuenta<br/>app instalada (R02)"| C02
+  P3 -->|"Revoca instancias tras verificar identidad<br/>red corporativa · SSO + MFA (R19)"| C17
+
+  %% Web y móvil hacia el borde
+  C01 -->|"Descarga la SPA y llama la API<br/>HTTPS TLS 1.3 · cookie HttpOnly · anti-CSRF (R03)"| C03
+  C02 -->|"Llama la API móvil<br/>HTTPS TLS 1.3 · pinning · DPoP (R04)"| C03
+  C03 -->|"Sirve estáticos<br/>HTTPS · OAC SigV4 (R05)"| C04
+  C03 -->|"Reenvía la API<br/>HTTPS TLS 1.3 · cabecera secreta · WAF (R06)"| C05
+  C05 -->|"Delega la autorización de cada solicitud<br/>invocación Lambda · IAM (R07)"| C06
+  C06 -->|"Verifica jti DPoP y lista de denegación<br/>Valkey TLS + AUTH · fail-static (R08)"| D08
+  C06 -->|"Obtiene llaves públicas JWKS<br/>HTTPS TLS 1.3 · caché (R09)"| X03
+
+  %% Enrutado a BFF
+  C05 -->|"Enruta /web/v1<br/>VPC Link V2 · TLS 1.3 (R10)"| C07
+  C05 -->|"Enruta /movil/v1<br/>VPC Link V2 · TLS 1.3 (R11)"| C08
+
+  %% BFF hacia el IdP y sesiones
+  C07 -->|"Inicia sesión como cliente confidencial<br/>HTTPS TLS 1.3 · private_key_jwt · DPoP · PKCE (R12)"| X03
+  C07 -->|"Guarda sesión y tokens cifrados<br/>Valkey TLS + AUTH/RBAC (R13)"| D08
+  C02 -->|"Autentica la instancia<br/>HTTPS TLS 1.3 · PKCE · private_key_jwt · DPoP (R14)"| X03
+  C08 -->|"Verifica la atestación de la app<br/>HTTPS TLS 1.3 · lista blanca (R15)"| X11
+  C08 -->|"Registra la instancia (DCR)<br/>HTTPS TLS 1.3 · software statement (R17)"| X03
+
+  %% BFF hacia dominio
+  C08 -->|"Pide alta o revocación de instancia<br/>TLS 1.3 Service Connect + JWT + DPoP (R16)"| C17
+  C07 -->|"Gestiona Mis dispositivos<br/>TLS 1.3 Service Connect + JWT step-up + DPoP (R18)"| C17
+  C07 -->|"Consulta datos del cliente<br/>TLS 1.3 Service Connect + JWT + DPoP (R23)"| C09
+  C08 -->|"Consulta datos del cliente<br/>TLS 1.3 Service Connect + JWT + DPoP (R23)"| C09
+  C07 -->|"Consulta saldos y movimientos<br/>TLS 1.3 Service Connect + JWT + DPoP (R24)"| C10
+  C08 -->|"Consulta saldos y movimientos<br/>TLS 1.3 Service Connect + JWT + DPoP (R24)"| C10
+  C07 -->|"Solicita transferencia o pago<br/>TLS 1.3 Service Connect + JWT + authorization_details + DPoP (R25)"| C12
+  C08 -->|"Solicita transferencia o pago<br/>TLS 1.3 Service Connect + JWT + authorization_details + DPoP (R25)"| C12
+  C08 -->|"Gestiona el expediente de alta<br/>TLS 1.3 Service Connect + JWT ligado a jkt + DPoP (R26)"| C16
+
+  %% Hacia 02b desde dispositivos y onboarding
+  C17 -->|"Escribe lista de denegación<br/>Valkey TLS + AUTH, TTL = vida del token (R21)"| D08
+  C17 -->|"Borra cliente OAuth y revoca refresh<br/>HTTPS TLS 1.3 · private_key_jwt (R22)"| X03
+  C16 -->|"Crea el usuario en el IdP (SCIM)<br/>HTTPS TLS 1.3 · private_key_jwt (R63)"| X03
+
+  PIE["<b>Leyenda:</b> sólida = síncrona · discontinua = asíncrona · cilindro = datos · borde discontinuo = gestionado AWS · gris = vecino o externo · gris azulado = BP on-premise · R## = docs/04-modelo-c4.md §2.2 · SC = Service Connect<br/><b>Pie:</b> canales y entrada. Personas, SPA y app entran solo por CloudFront con WAF, API Gateway y Lambda authorizer, y llegan al BFF de su canal. Desde el BFF se ve a qué servicios de dominio llama. Los servicios y sus bases están en 02b"]:::pie

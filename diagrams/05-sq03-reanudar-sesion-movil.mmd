@@ -1,0 +1,33 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente
+    participant APP as App móvil
+    participant SE as Secure Enclave / StrongBox
+    participant GW as API Gateway + authorizer
+    participant BFFM as bff-movil
+    participant IdP as IdP OIDC existente
+    participant AUD as Auditoría (ADR-012)
+
+    APP->>APP: App a segundo plano (>30 s) o 2 min sin actividad
+    APP->>APP: Bloqueo: oculta contenido, descarta access token de memoria
+    BFFM->>BFFM: Sesión marcada inactiva (2 min sin peticiones) → 401 a tokens previos
+    BFFM--)AUD: auth.session.locked
+    U->>APP: Vuelve a la app
+    APP->>U: BiometricPrompt / Face ID (pantalla de la app, no el desbloqueo del SO)
+    U->>SE: Huella / rostro
+    alt Dentro de la sesión absoluta (≤ 30 min) y credencial de dispositivo vigente
+        APP->>IdP: PAR (acr_values=device-binding, max_age=0, login_hint) + /authorize en el navegador del sistema
+        IdP->>APP: Reto de device binding
+        SE-->>APP: Firma del reto con K_bind
+        APP->>IdP: POST /token (code, code_verifier, client_assertion K_inst, DPoP)
+        IdP-->>APP: Tokens nuevos (auth_time actual)
+        APP->>GW: Peticiones con tokens nuevos (DPoP)
+        GW->>GW: Valida JWT, DPoP, acr y lista de denegación
+        GW->>BFFM: Reenvía (VPC Link)
+        BFFM->>BFFM: Reactiva la sesión (auth_time posterior al bloqueo)
+        BFFM--)AUD: auth.session.resumed
+    else Sesión absoluta vencida
+        APP->>IdP: Login completo (mismo flujo de login, biometría + K_bind)
+    else Credencial de dispositivo revocada, biometría cambiada o > 180 días sin uso
+        APP->>U: Re-enrolamiento con verificación de identidad (ADR-008)
+    end

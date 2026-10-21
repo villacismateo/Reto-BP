@@ -1,0 +1,62 @@
+# PoC Reto BP: gateway (nginx) -> transferencias-poc -> PostgreSQL / Valkey / Core simulado (WireMock)
+# Uso: docker compose up --build   (opcional: cp env.example .env para cambiar valores)
+name: reto-bp-poc
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-transferencias}
+      POSTGRES_USER: ${POSTGRES_USER:-poc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cambiar_solo_local}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  valkey:
+    image: valkey/valkey:8.0-alpine
+    command: ["valkey-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  core-mock:
+    image: wiremock/wiremock:3.9.1
+    command: ["--disable-banner"]
+    volumes:
+      - ./core-mock:/home/wiremock:ro
+    ports:
+      - "${CORE_MOCK_PUERTO:-8089}:8080"   # expuesto solo para inyectar fallas via /__admin
+
+  app:
+    build: ./transferencias-poc
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-transferencias}
+      DB_USUARIO: ${POSTGRES_USER:-poc}
+      DB_CLAVE: ${POSTGRES_PASSWORD:-cambiar_solo_local}
+      CACHE_HOST: valkey
+      CORE_URL: http://core-mock:8080
+      CACHE_TTL_VIGENTE: ${CACHE_TTL_VIGENTE:-30s}
+    depends_on:
+      postgres: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      core-mock: { condition: service_started }
+    restart: unless-stopped   # auto-healing basico (en AWS: ECS + health checks del ALB)
+
+  gateway:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "${GATEWAY_PUERTO:-8080}:8080"
+    depends_on:
+      app: { condition: service_healthy }
+
+volumes:
+  pgdata:

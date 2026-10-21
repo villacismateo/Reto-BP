@@ -1,0 +1,91 @@
+---
+title: DC-03c · Componentes · Movimientos (CQRS, CDC y clientes frecuentes) · v1.0 · 2026-10-20
+---
+%% DC-03c · Fuente: docs/04-modelo-c4.md §3.3 (12 componentes M01–M12, 11 vecinos, 17 relaciones RM01–RM17).
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03c-componentes-movimientos-cqrs.mmd -o png/03c-componentes-movimientos-cqrs.png -s 2 -b white -c mermaid-config.json
+%% Colores = paleta C4 (plantilla c4-componentes-plantilla.mmd). Sólida = síncrona (-->), discontinua = asíncrona (-.->).
+flowchart TB
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+
+  subgraph CDC["Escritura y proyección CDC (lado de escritura del modelo de lectura)"]
+    direction LR
+    X01["<b>Core (réplica)</b><br/>[Sistema BP: BD on-prem]<br/>Origen del CDC"]:::existente
+    Q05["<b>AWS DMS</b><br/>[Gestionado: DMS CDC]<br/><i>«Change Data Capture»</i><br/>Lee el log de la réplica"]:::gestionado
+    Q04["<b>cdc-movimientos</b><br/>[Stream: Kinesis]<br/>Orden por cuenta"]:::cont
+    subgraph PROY["svc-cuentas-proyector [Contenedor: Java 21 · KCL · ECS]"]
+      direction LR
+      M01["<b>ConsumidorCdc</b><br/>[Componente: KCL]<br/>Lee el stream con checkpoint"]:::comp
+      M02["<b>TraductorModeloCore</b><br/>[Componente: Java]<br/><i>«Anti-Corruption Layer»</i><br/>Modelo del Core a canónico"]:::comp
+      M03["<b>ProyectorMovimientos</b><br/>[Componente: Java]<br/><i>«CQRS»</i><br/>Upsert idempotente por secuencia"]:::comp
+    end
+    D03[("<b>movimientos</b><br/>[Base: DynamoDB]<br/>Modelo de lectura")]:::datos
+    Q01["<b>bus bp-dominio</b><br/>[Stream: EventBridge]<br/>Publica MovimientoRegistrado"]:::cont
+  end
+
+  subgraph CONS["Consulta (lado de lectura del modelo de lectura)"]
+    direction LR
+    BFF["<b>BFF web / móvil</b><br/>[Contenedor: Spring Boot]<br/>Compone posición y movimientos"]:::vecino
+    C12["<b>svc-transferencias</b><br/>[Contenedor: Spring Boot]<br/>Operaciones en curso"]:::vecino
+    subgraph CUENTAS["svc-cuentas [Contenedor: Java 21 · Spring Boot · ECS]"]
+      direction LR
+      M04["<b>MovimientosController</b><br/>[Componente: Spring Web]<br/>Expone consulta paginada"]:::comp
+      M05["<b>FiltroSeguridadJwt</b><br/>[Componente: Spring Security]<br/><i>«Zero trust»</i><br/>Valida scopes y titular"]:::comp
+      M06["<b>ConsultarMovimientosQuery</b><br/>[Componente: Java]<br/><i>«CQRS»</i><br/>Consulta paginada de 13 meses"]:::comp
+      M07["<b>RepositorioCacheado</b><br/>[Componente: Valkey]<br/><i>«Cache-Aside»</i><br/>Caché con lectura de respaldo"]:::comp
+      M08["<b>MonitorFrescura</b><br/>[Componente: CloudWatch]<br/><i>«Circuit Breaker»</i><br/>Lag de DMS mayor a 60 s"]:::comp
+      M09["<b>ClienteCoreResiliente</b><br/>[Componente: Resilience4j]<br/><i>«Circuit Breaker»</i><br/>Primera página y saldos del Core"]:::comp
+      M10["<b>InvalidadorPorEventos</b><br/>[Componente: SQS]<br/>Borra claves al cambiar movimientos"]:::comp
+      M11["<b>PrecargadorPerfil</b><br/>[Componente: SQS]<br/><i>«Refresh-Ahead»</i><br/>Precarga clientes frecuentes"]:::comp
+    end
+    D07[("<b>Caché de datos</b><br/>[Base: ElastiCache Valkey]<br/>Claves cli y cta")]:::datos
+    subgraph CLIENTES["svc-clientes [Contenedor: Java 21 · Spring Boot]"]
+      M12["<b>DetectorFrecuencia</b><br/>[Componente: Valkey]<br/>Marca frecuente: 8 sesiones/30 días"]:::comp
+    end
+    D04[("<b>perfil-digital</b><br/>[Base: DynamoDB]<br/>Marca de frecuencia")]:::datos
+    Q02["<b>Colas de consumidores</b><br/>[Cola: SQS + DLQ]<br/>Entrega eventos a consumidores"]:::cont
+    C18["<b>acl-core</b><br/>[Contenedor: Spring Boot]<br/>Presupuesto de TPS al Core"]:::vecino
+  end
+
+  %% Carril de escritura (CDC)
+  X01 -.->|"RM01 · entrega log · TLS por DX"| Q05
+  Q05 -.->|"RM02 · publica cambios · Kinesis IAM"| Q04
+  Q04 -.->|"RM03 · consume · KCL"| M01
+  M01 -.->|"RM03 · traduce · interno"| M02
+  M02 -.->|"RM03 · proyecta · interno"| M03
+  M03 -->|"RM04 · escribe proyección · VPCE IAM"| D03
+  D03 -.->|"RM05 · publica evento · Pipes"| Q01
+
+  %% Carril de consulta
+  BFF -->|"RM06 · consulta movimientos · SC JWT"| M04
+  M04 -->|"RM07 · autoriza · en proceso"| M05
+  M05 -->|"RM07 · ejecuta · en proceso"| M06
+  M06 -->|"RM08 · busca primera página · en proceso"| M07
+  M07 -->|"RM08 · lee caché · Valkey TLS"| D07
+  M07 -->|"RM09 · lee si caché falla · VPCE IAM"| D03
+  M07 -->|"RM10 · va al Core si circuito abierto · SC"| M09
+  M09 -->|"RM10 · pide al Core · SC token"| C18
+  M08 -->|"RM11 · indica frescura · en proceso"| M07
+  Q01 -.->|"RM12 · entrega invalidación · SQS"| Q02
+  Q02 -.->|"RM12 · entrega a consumidor · SQS"| M10
+  M10 -->|"RM13 · borra claves · Valkey TLS"| D07
+  Q02 -.->|"RM14 · entrega login · SQS"| M12
+  M12 -->|"RM15 · guarda marca · VPCE IAM"| D04
+  Q02 -.->|"RM16 · precarga · SQS"| M11
+  M11 -.->|"RM16 · carga datos · en proceso"| M07
+  BFF -->|"RM17 · fusiona operaciones · SC JWT"| C12
+
+  CONS ~~~ LEG
+  subgraph LEG["Leyenda"]
+    direction LR
+    L1["Componente (propio)"]:::comp
+    L2["Contenedor / cola"]:::cont
+    L3[("Base de datos")]:::datos
+    L4["Vecino"]:::vecino
+    L5["Sistema BP existente"]:::existente
+    L1 ~~~ L2 ~~~ L3 ~~~ L4 ~~~ L5
+  end

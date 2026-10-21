@@ -1,0 +1,62 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: transferencias-poc
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/transferencias}
+    username: ${DB_USUARIO:poc}
+    password: ${DB_CLAVE:solo_local_cambiar}
+  data:
+    redis:
+      host: ${CACHE_HOST:localhost}
+      port: ${CACHE_PUERTO:6379}
+      timeout: 500ms
+  flyway:
+    enabled: true
+
+poc:
+  core:
+    url: ${CORE_URL:http://localhost:8089}
+    timeout-conexion: 500ms
+    timeout-lectura: 1500ms
+  cache:
+    ttl-vigente: ${CACHE_TTL_VIGENTE:30s}
+    ttl-respaldo: 24h
+  outbox:
+    intervalo-ms: 1000
+    lote: 50
+  eventos:
+    stream: transferencias.eventos
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      core:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        minimum-number-of-calls: 4
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 1s
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+        permitted-number-of-calls-in-half-open-state: 2
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,circuitbreakers,metrics
+  health:
+    circuitbreakers:
+      enabled: true
+  endpoint:
+    health:
+      show-details: always

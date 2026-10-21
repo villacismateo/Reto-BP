@@ -1,0 +1,25 @@
+%% Plantilla común para diagramas C4 de COMPONENTES (03a-03d) en Mermaid.
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03x.mmd -o png/03x.png -w 2400 -b white -c mermaid-config.json
+%% Colores = paleta C4 de c4_comun.py. Sólida = síncrona (-->), discontinua = asíncrona (-.->).
+%% Componente:  ID["<b>Nombre</b><br/>[Componente: Tecnología]<br/><i>«Patrón»</i><br/>Descripción corta"]:::comp
+%% Vecino:      ID["<b>Nombre</b><br/>[Contenedor / Sistema]"]:::vecino
+%% Datos:       ID[("<b>Nombre</b><br/>[Base de datos]")]:::datos
+flowchart LR
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+
+  subgraph B1["svc-ejemplo [Contenedor: Java 21 / Spring Boot · ECS Fargate]"]
+    direction LR
+    C01["<b>Controlador API</b><br/>[Componente: Spring MVC]<br/><i>«Puerto de entrada»</i><br/>Recibe solicitudes"]:::comp
+    C02["<b>Servicio de dominio</b><br/>[Componente: Java]<br/><i>«Hexagonal»</i><br/>Reglas de negocio"]:::comp
+  end
+  X01["<b>bff-movil</b><br/>[Contenedor]"]:::vecino
+  D01[("<b>Aurora</b><br/>[Base de datos]")]:::datos
+
+  X01 -->|"R01 · HTTPS TLS 1.3 + JWT"| C01
+  C01 --> C02
+  C02 -.->|"R02 · evento"| D01

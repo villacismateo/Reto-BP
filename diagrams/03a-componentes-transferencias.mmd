@@ -1,0 +1,112 @@
+---
+title: "DC-03a · Componentes: svc-transferencias (API, worker, saga) y acl-interbancario · v1.0"
+---
+%% DC-03a · Fuente: docs/04-modelo-c4.md §3.1. Paleta §0.1. Sólida = síncrona, discontinua = asíncrona.
+%% Render: npx -y @mermaid-js/mermaid-cli@11.4.2 -i 03a-componentes-transferencias.mmd -o png/03a-componentes-transferencias.png -s 2 -b white -c mermaid-config.json
+flowchart TB
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef gest fill:#85BBF0,stroke:#5A9AD0,color:#000,stroke-dasharray:5 3,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+
+  BFF["<b>bff-web / bff-movil</b><br/>[Contenedor: Spring Boot]"]:::vecino
+
+  subgraph API["svc-transferencias (API) · [Contenedor: Java 21 / Spring Boot · ECS Fargate]"]
+    direction TB
+    T01["<b>T01 · TransferenciasController</b><br/>[Componente: Spring Web MVC]<br/>POST y GET de transferencias"]:::comp
+    T02["<b>T02 · FiltroSeguridadJwt</b><br/>[Componente: Spring Security]<br/><i>«Zero trust · defensa BOLA»</i><br/>Valida firma, aud, scopes, propiedad"]:::comp
+    T03["<b>T03 · ValidadorAutorizacionRar</b><br/>[Componente: Java]<br/><i>«Vinculación RFC 9396»</i><br/>Exige acr y coincidencia RAR"]:::comp
+    T04["<b>T04 · ServicioIdempotencia</b><br/>[Componente: Java + tabla]<br/><i>«Idempotency Key»</i><br/>Reutiliza respuesta o rechaza duplicados"]:::comp
+    T05["<b>T05 · IniciarTransferenciaUseCase</b><br/>[Componente: Java]<br/><i>«Puertos y adaptadores»</i><br/>Valida límites y beneficiario"]:::comp
+    T06["<b>T06 · SelectorEstrategiaTransferencia</b><br/>[Componente: Java]<br/><i>«Strategy»</i><br/>Elige estrategia por tipo"]:::comp
+    T07["<b>T07 · RepositorioTransferencias</b><br/>[Componente: Spring Data JDBC]<br/><i>«Repository»</i><br/>Persiste transferencias y beneficiarios"]:::comp
+    T08["<b>T08 · OutboxWriter</b><br/>[Componente: Java]<br/><i>«Transactional Outbox»</i><br/>Escribe evento en la misma transacción"]:::comp
+    T09["<b>T09 · ClienteCoreResiliente (API)</b><br/>[Componente: Resilience4j]<br/><i>«Circuit Breaker · Bulkhead»</i><br/>Contabiliza asiento único, timeout 3 s"]:::comp
+  end
+
+  subgraph WRK["svc-transferencias-worker · [Contenedor: Java 21 / Spring Boot · ECS Fargate]"]
+    direction TB
+    T10["<b>T10 · OutboxRelay</b><br/>[Componente: Java, SKIP LOCKED]<br/><i>«Polling Publisher»</i><br/>Publica eventos e inicia la saga"]:::comp
+    T12["<b>T12 · WorkerTareasSaga</b><br/>[Componente: Java, consumidor SQS]<br/><i>«Competing Consumers»</i><br/>Ejecuta pasos y devuelve task token"]:::comp
+    T13["<b>T13 · ClienteCoreResiliente (worker)</b><br/>[Componente: Resilience4j]<br/><i>«Circuit Breaker · Retry»</i><br/>Débito y reverso idempotentes"]:::comp
+    T14["<b>T14 · ClienteInterbancarioResiliente</b><br/>[Componente: Resilience4j]<br/><i>«Circuit Breaker»</i><br/>Llama a acl-interbancario, timeout 5 s"]:::comp
+  end
+
+  subgraph SFN["Step Functions · [Contenedor gestionado AWS]"]
+    direction TB
+    T11["<b>T11 · SagaInterbancaria</b><br/>[Componente: Step Functions Standard]<br/><i>«Saga orquestada»</i><br/>Débito, envío, confirmación, compensación"]:::gest
+  end
+
+  subgraph ACL["acl-interbancario · [Contenedor: Java 21 / Spring Boot · ECS Fargate]"]
+    direction TB
+    T16["<b>T16 · ApiPagos</b><br/>[Componente: Spring Web]<br/><i>«Anti-Corruption Layer»</i><br/>Contrato canónico de orden de pago"]:::comp
+    T17["<b>T17 · SelectorRiel</b><br/>[Componente: Java]<br/><i>«Strategy»</i><br/>RPI hasta USD 15.000, si no SPI"]:::comp
+    T18["<b>T18 · RielRpiStrategy / RielSpiStrategy</b><br/>[Componente: Java]<br/><i>«Strategy»</i><br/>Envío y consulta por riel"]:::comp
+    T19["<b>T19 · TraductorIso20022</b><br/>[Componente: Java, JAXB]<br/><i>«Adapter · Message Translator»</i><br/>Canónico a pacs.008 y pacs.002"]:::comp
+    T20["<b>T20 · AdaptadorConectorPagos</b><br/>[Componente: Cliente HTTP mTLS]<br/><i>«Adapter»</i><br/>Envía al conector y recibe callbacks"]:::comp
+  end
+
+  T15["<b>T15 · ColaIntervencionManual</b><br/>[Componente: SQS + alarma P1]<br/><i>«Dead Letter Channel»</i><br/>Compensaciones agotadas, no se descartan"]:::comp
+  C18["<b>acl-core</b><br/>[Contenedor: Spring Boot]"]:::vecino
+  D01[("<b>D01 · BD transferencias</b><br/>[Base de datos: Aurora PostgreSQL]")]:::datos
+  Q01["<b>Q01 · Bus bp-dominio</b><br/>[Cola: EventBridge]"]:::cont
+  Q06["<b>Q06 · Stream auditoria</b><br/>[Stream: Kinesis]"]:::cont
+  Q03["<b>Q03 · Colas de tareas</b><br/>[Cola: SQS]"]:::cont
+  X04["<b>X04 · Conector de pagos BP</b><br/>[Sistema existente BP: ISO 20022]"]:::existente
+
+  %% Llamadas de entrada y API
+  BFF -->|"RT01 · envía solicitud · HTTP/2 TLS · JWT"| T01
+  T01 -->|"RT02 · autentica · en proceso"| T02
+  T01 -->|"RT03 · verifica acr · en proceso"| T03
+  T01 -->|"RT04 · reserva clave · en proceso"| T04
+  T04 -->|"RT05 · ejecuta caso de uso · en proceso"| T05
+  T05 -->|"RT06 · elige estrategia · en proceso"| T06
+  T05 -->|"RT07 · guarda en transacción · JDBC TLS"| T07
+  T05 -->|"RT07 · guarda outbox · JDBC TLS"| T08
+  T07 -->|"RT07 · persiste · JDBC IAM"| D01
+  T08 -->|"RT07 · escribe outbox · JDBC IAM"| D01
+  T06 -->|"RT08 · contabiliza propias · en proceso"| T09
+  T09 -->|"RT08 · asiento único · SC token"| C18
+  T06 -->|"RT09 · responde 202 · en proceso"| T01
+
+  %% Worker y saga
+  T10 -->|"RT10 · lee pendientes · PostgreSQL TLS"| D01
+  T10 -.->|"RT11 · publica dominio · CloudEvents"| Q01
+  T10 -.->|"RT11 · publica auditoría · CloudEvents"| Q06
+  T10 -->|"RT12 · inicia saga · API SFN VPCE"| T11
+  T11 -.->|"RT13 · encola paso · SQS IAM"| Q03
+  Q03 -.->|"RT13 · entrega paso · task token"| T12
+  T12 -->|"RT18 · devuelve resultado · SendTask"| T11
+  T12 -->|"RT14 · ejecuta paso · en proceso"| T13
+  T13 -->|"RT14 · débito y reverso · SC token"| C18
+  T12 -->|"RT15 · envía orden · en proceso"| T14
+  T12 -->|"RT19 · actualiza estado y outbox · PostgreSQL TLS"| D01
+  T11 -.->|"RT20 · agotada, a intervención · SQS P1"| T15
+
+  %% Interbancaria
+  T14 -->|"RT15 · llama al ACL · SC token"| T16
+  T16 -->|"RT16 · selecciona riel · en proceso"| T17
+  T17 -->|"RT16 · envía por riel · en proceso"| T18
+  T18 -->|"RT16 · traduce · en proceso"| T19
+  T19 -->|"RT16 · envía · en proceso"| T20
+  T20 -.->|"RT17 · envía pacs.008 · mTLS sobre IPsec-DX"| X04
+  X04 -.->|"RT17 · recibe pacs.002 · callback"| T20
+
+  subgraph LEG["Leyenda"]
+    direction TB
+    L1["Componente"]:::comp
+    L2["Contenedor"]:::cont
+    L3["Vecino"]:::vecino
+    L4["Sistema existente BP"]:::existente
+    L5["Gestionado AWS"]:::gest
+    L1 -->|"síncrona"| L2
+    L3 -.->|"asíncrona"| L4
+  end
+
+  style API fill:#F4F8FC,stroke:#8AA8C8,stroke-dasharray:5 3
+  style WRK fill:#F4F8FC,stroke:#8AA8C8,stroke-dasharray:5 3
+  style SFN fill:#F4F8FC,stroke:#8AA8C8,stroke-dasharray:5 3
+  style ACL fill:#F4F8FC,stroke:#8AA8C8,stroke-dasharray:5 3
+  style LEG fill:#FFFFFF,stroke:#8AA8C8,stroke-dasharray:5 3

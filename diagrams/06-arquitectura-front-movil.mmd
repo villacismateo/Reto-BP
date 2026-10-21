@@ -1,0 +1,70 @@
+---
+title: DC-06 · Arquitectura interna de los canales · SPA Angular y app Flutter · v1.0 · 2026-10-20
+---
+%% DC-06 · Fuente: docs/Arquitectura-BancaInternet-BP.md §11.3, ADR-005 y ADR-006.
+%% Render (desde diagrams): npx -y @mermaid-js/mermaid-cli@11.4.2 -i 06-arquitectura-front-movil.mmd -o png/06-arquitectura-front-movil.png -w 2000 -s 2 -b white -c mermaid-config.json
+%% Colores = paleta C4 (plantilla c4-componentes-plantilla.mmd). Sólida = síncrona (-->), discontinua = asíncrona (-.->).
+flowchart TB
+  classDef comp fill:#85BBF0,stroke:#5A9AD0,color:#000,font-size:18px
+  classDef cont fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef datos fill:#438DD5,stroke:#2F6FB0,color:#fff,font-size:18px
+  classDef vecino fill:#999999,stroke:#737373,color:#fff,font-size:18px
+  classDef existente fill:#6B7B8C,stroke:#4F5C68,color:#fff,font-size:18px
+  classDef gestionado fill:#438DD5,stroke:#2F6FB0,color:#fff,stroke-dasharray:5 3,font-size:18px
+
+  subgraph CANALES[" "]
+    direction LR
+    subgraph SPA["SPA banca web [Angular LTS · standalone + signals · monorepo Nx]"]
+      direction TB
+      W1["<b>features (carga diferida)</b><br/>posición · movimientos · transferencias<br/>pagos · perfil · seguridad<br/>Rutas con guardas de sesión y step-up"]:::comp
+      W2["<b>data-access</b><br/>Clientes generados del OpenAPI de bff-web<br/>Estado por funcionalidad con signals"]:::comp
+      W3["<b>core</b><br/>Interceptor: cookie __Host-sid + XSRF<br/>Manejo de 401/step-up · i18n (es-EC)<br/>RUM y correlationId"]:::comp
+      W4["<b>shared / ui-kit</b><br/>Sistema de diseño WCAG 2.2 AA<br/>Componentes accesibles, sin scripts de terceros"]:::comp
+      W5["<b>Navegador</b><br/>CSP estricta con nonces + Trusted Types<br/>Sin tokens en JavaScript ni en storage"]:::vecino
+      W1 --> W2 --> W3
+      W1 --> W4
+      W3 --> W5
+    end
+
+    subgraph APP["App móvil [Flutter · Clean Architecture por funcionalidad]"]
+      direction TB
+      M1["<b>Presentación</b><br/>Widgets + BLoC por funcionalidad<br/>posición · movimientos · transferencias<br/>pagos · onboarding · seguridad"]:::comp
+      M2["<b>Dominio</b><br/>Casos de uso y entidades (Dart puro)<br/>Sin dependencias de plataforma"]:::comp
+      M3["<b>Datos</b><br/>Repositorios · cliente OpenAPI de bff-movil<br/>Caché local mínima cifrada"]:::comp
+      M4["<b>Módulo nativo de seguridad</b><br/>Swift / Kotlin vía platform channels<br/>Llave K_bind en Secure Enclave / StrongBox<br/>Firma DPoP · biometría local · App Attest / Play Integrity<br/>RASP · pinning SPKI con pins de respaldo"]:::comp
+      M5["<b>Integraciones de plataforma</b><br/>AppAuth (navegador del sistema) · SDK IDV FacePhi<br/>Push FCM / APNs · configuración remota<br/>(versión mínima, feature flags)"]:::comp
+      M1 --> M2 --> M3
+      M3 --> M4
+      M1 --> M5
+    end
+  end
+
+  CF["<b>CloudFront + AWS WAF + Shield Advanced</b><br/>[Gestionado AWS]<br/>Estáticos de la SPA y entrada a la API"]:::gestionado
+  S3[("<b>spa-web</b><br/>[S3 privado con OAC]<br/>Assets inmutables con hash")]:::datos
+  AGW["<b>API Gateway REST</b><br/>[Gestionado AWS]<br/>/web/v1 y /movil/v1 · authorizer JWT + DPoP + acr"]:::gestionado
+  BW["<b>bff-web</b><br/>[Contenedor: Spring Boot]<br/>Token handler"]:::vecino
+  BM["<b>bff-movil</b><br/>[Contenedor: Spring Boot]<br/>Atestación y DCR"]:::vecino
+  IDP["<b>IdP OIDC de BP</b><br/>[Sistema BP existente]<br/>Code + PKCE + PAR"]:::existente
+  PN["<b>APNs / FCM</b><br/>[Sistema externo]"]:::existente
+
+  W5 -->|"descarga la SPA · HTTPS"| CF
+  CF -->|"origen privado · OAC"| S3
+  W5 -->|"llamadas /web/v1 · HTTPS + cookie HttpOnly + X-XSRF-TOKEN"| CF
+  M3 -->|"llamadas /movil/v1 · HTTPS TLS 1.3 + pinning + access token DPoP"| CF
+  CF -->|"reenvía API · HTTPS"| AGW
+  AGW -->|"VPC Link · /web/v1"| BW
+  AGW -->|"VPC Link · /movil/v1"| BM
+  BW -->|"login del canal web · OIDC confidencial"| IDP
+  M5 -->|"login · navegador del sistema · PKCE + PAR"| IDP
+  PN -.->|"notificaciones push sin montos completos"| M5
+
+  subgraph LEG["Leyenda"]
+    direction LR
+    L1["Capa / módulo del canal"]:::comp
+    L3[("Almacén")]:::datos
+    L4["Contenedor vecino o entorno"]:::vecino
+    L5["Sistema externo o de BP"]:::existente
+    L6["Servicio gestionado AWS"]:::gestionado
+    L7["Sólida = síncrona · discontinua = asíncrona"]:::vecino
+    L1 ~~~ L3 ~~~ L4 ~~~ L5 ~~~ L6 ~~~ L7
+  end

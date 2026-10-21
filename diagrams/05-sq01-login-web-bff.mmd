@@ -1,0 +1,48 @@
+sequenceDiagram
+    autonumber
+    actor U as Cliente
+    participant SPA as SPA (navegador)
+    participant GW as API Gateway (/web/v1/*)
+    participant BFF as bff-web (cliente confidencial)
+    participant IdP as IdP OIDC existente
+    participant TRX as svc-transferencias
+    participant AUD as Auditoría (ADR-012)
+
+    Note over SPA,BFF: Toda llamada SPA → bff-web pasa por CloudFront + WAF + API Gateway (cookie __Host-sid + cabecera anti-CSRF, throttling)
+    U->>SPA: Abrir banca web
+    SPA->>GW: GET /web/v1/login
+    GW->>BFF: Reenvía (VPC Link)
+    BFF->>BFF: Genera code_verifier, state, nonce y llave DPoP efímera de la sesión (cifrada en ElastiCache de seguridad)
+    BFF->>IdP: POST /par (private_key_jwt, code_challenge S256, dpop_jkt, scope, acr_values=aal1)
+    IdP-->>BFF: request_uri
+    BFF-->>SPA: 302 a /authorize?request_uri=...
+    SPA->>IdP: /authorize (redirección de nivel superior)
+    U->>IdP: Passkey (WebAuthn) o clave + push/TOTP
+    IdP-->>SPA: 302 redirect_uri?code&state&iss
+    SPA->>BFF: GET /web/v1/callback?code&state&iss (vía API Gateway)
+    BFF->>IdP: POST /token (code, code_verifier, private_key_jwt, prueba DPoP)
+    IdP-->>BFF: access 5 min (cnf.jkt), refresh ligado por DPoP sin rotación, id_token
+    BFF->>BFF: Valida id_token (nonce, iss, aud), guarda tokens cifrados en sesión
+    BFF-->>SPA: Set-Cookie __Host-sid (HttpOnly, Secure, SameSite=Strict) + último ingreso
+    BFF--)AUD: auth.login.succeeded (acr, canal, IP, correlation_id) → notificación de inicio de sesión
+
+    U->>SPA: Transferir a nuevo beneficiario
+    SPA->>GW: POST /web/v1/transferencias (cookie, anti-CSRF, Idempotency-Key)
+    GW->>BFF: Reenvía (VPC Link)
+    BFF->>TRX: POST /v1/transferencias (SC TLS 1.3, JWT + prueba DPoP, Idempotency-Key)
+    TRX->>TRX: Valida JWT y prueba DPoP contra cnf.jkt (jti anti-replay), acr insuficiente
+    TRX-->>BFF: 401 insufficient_user_authentication, acr_values=aal2-tx (RFC 9470)
+    BFF->>IdP: POST /par (authorization_details: monto, destino, Idempotency-Key, acr_values=aal2-tx, max_age=0, PKCE, DPoP)
+    IdP-->>BFF: request_uri
+    BFF-->>SPA: 401 step_up_required + URL /authorize?request_uri (guarda la orden pendiente)
+    SPA->>IdP: /authorize (redirección de nivel superior)
+    U->>IdP: Aprueba en la app enrolada (firma K_bind sobre monto y destino) o passkey
+    IdP-->>SPA: 302 redirect_uri?code&state&iss
+    SPA->>BFF: GET /web/v1/callback?code&state&iss (vía API Gateway)
+    BFF->>IdP: POST /token (code, code_verifier, private_key_jwt, prueba DPoP)
+    IdP-->>BFF: access token acr=aal2-tx con authorization_details (cnf.jkt)
+    BFF->>TRX: Reintenta POST /v1/transferencias (mismo Idempotency-Key, JWT + prueba DPoP)
+    TRX->>TRX: Valida JWT, DPoP, acr y cuerpo == authorization_details, propiedad de la cuenta
+    TRX-->>BFF: 202 Aceptada {id, EN_PROCESO}
+    BFF-->>SPA: 302 a la pantalla de estado de la transferencia (202)
+    BFF--)AUD: auth.stepup.succeeded + transferencia.solicitada

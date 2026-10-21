@@ -1,0 +1,72 @@
+capa,servicio,entorno,supuesto_volumen,precio_unitario,fuente_estado,costo_mensual_usd,elasticidad_volumen
+Borde,CloudFront - transferencia de salida,prod,"~3,5 TB/mes (API 120 M x 8 KB + SPA 2,4 M sesiones web x 1 MB)","0,085 USD/GB primeros 10 TB (EE. UU.)",[V] Price List 2026-10-03,298,1
+Borde,CloudFront - solicitudes HTTPS,prod,~200 M solicitudes/mes (API + estaticos),"0,0100 USD/10.000 HTTPS (EE. UU.)",[V] Price List 2026-10-03,200,1
+Borde,"AWS WAF global (CloudFront) - Web ACL, reglas y solicitudes",prod,"1 Web ACL, ~15 reglas, 200 M solicitudes; exento por Shield Advanced (CloudFront protegido)","5 USD/ACL, 1 USD/regla, 0,60 USD/M (0 si Shield-protected)",[V] Price List 2026-09-14,0,0
+Borde,"AWS WAF regional (API Gateway, no protegible por Shield)",prod,"1 Web ACL, ~10 reglas, 120 M solicitudes","5 USD/ACL, 1 USD/regla, 0,60 USD/M",[V] Price List 2026-09-14,87,1
+Borde,Shield Advanced - transferencia de datos de CloudFront protegido,prod,"~3,5 TB/mes","~0,025 USD/GB",[V] pagina publica,88,1
+Borde,AWS WAF - Bot Control targeted (rutas sensibles),prod,~16 M solicitudes/mes en /login /par /register /onboarding,10 USD/mes + 10 USD/M sobre 1 M,[V] Price List 2026-09-14,160,1
+Borde,AWS WAF - ATP (login web),prod,"~2,4 M intentos de login web/mes (30 % de 8 M sesiones)","Fraud Control 1,00 USD/1.000 (10k-2M) y 0,70 USD/1.000 (2M-5M) + 10 USD/mes",[V] Price List 2026-09-14,2283,1
+Borde,AWS WAF - ACFP (inicio de onboarding),prod,~30.000 inicios de onboarding/mes,"Fraud Control 1,00 USD/1.000 sobre 10k + 10 USD/mes",[V] Price List 2026-09-14,30,1
+Borde,AWS Shield Advanced,prod,"1 suscripcion organizacional, compromiso 1 ano",3.000 USD/mes,[V] pagina publica (no figura en Price List),3000,0
+Borde,"Route 53 - zonas, consultas, health checks",prod,"4 zonas, ~50 M consultas, 10 health checks","0,50 USD/zona; 0,40 USD/M; 0,75 USD/check",[E] pagina publica,30,0.5
+Borde,Route 53 ARC - cluster de routing control,prod,"1 cluster (5 endpoints regionales), compartible con otras cargas de BP","2,50 USD/hora",[V] pagina publica,1825,0
+Borde,Route 53 ARC Region switch - plan de conmutacion regional (runbook codificado),prod,1 plan,70 USD/plan-mes,[V] pagina publica,70,0
+API,API Gateway REST regional,prod,120 M llamadas/mes (S-06: 46 req/s promedio),"3,50 USD/M (primeros 333 M)",[V] Price List 2026-10-13,420,1
+API,Lambda authorizer (JWT + DPoP) ARM64,prod,"120 M invocaciones, 20 ms, 512 MB; sin cache por DPoP","0,20 USD/M + 0,0000133334 USD/GB-s",[E] pagina publica,40,1
+API,"ALB interno (VPC Link V2, sin NLB)",prod,1 ALB (~5 LCU promedio),"0,0225 USD/h + 0,008 USD/LCU-h",[E] pagina publica,55,0.5
+Computo,"ECS Fargate ARM64 (14 servicios, tabla 1.6)",prod,"44 tareas promedio: 20 x 1 vCPU/2 GB + 24 x 2 vCPU/4 GB = 68 vCPU / 136 GB (app + ADOT + proxy Service Connect, tamanos validos)","0,03238 USD/vCPU-h; 0,00356 USD/GB-h",[V] Price List 2026-10,1960,0.8
+Computo,"Lambda (sellado de auditoria, jobs)",prod,< 1 M invocaciones,"0,20 USD/M",[E],10,0
+Datos,Aurora PostgreSQL svc-transferencias (escritor + lector db.r8g.large),prod,"2 instancias en 2 AZ, 200 GB, ~300 M I/O","0,276 USD/h instancia; 0,10 USD/GB-mes; 0,20 USD/M I/O",[V] Price List 2026-10,493,0.3
+Datos,Aurora Global Database - I/O replicadas,prod,~100 M I/O replicadas,"0,20 USD/M",[V] Price List 2026-10,20,1
+Datos,Aurora PostgreSQL de plataforma (svc-onboarding) db.r8g.large escritor + lector,prod,2 instancias aprovisionadas (Serverless v2 en Global Database exige min. 8 ACU),"0,276 USD/h instancia + almacenamiento/I/O",[V] Price List 2026-10,413,0.3
+Datos,"DynamoDB on-demand (movimientos, perfil, notificaciones, dispositivos)",prod,"130 M WRU, 60 M RRU, ~650 GB","0,625 USD/M WRU; 0,125 USD/M RRU; 0,25 USD/GB-mes",[V] Price List 2026-09-11,250,0.9
+Datos,ElastiCache Valkey - datos (clientes frecuentes),prod,2 shards x (primario + replica) cache.r7g.large,"0,1752 USD/h nodo",[V] Price List 2026-10-14,512,0.3
+Datos,"ElastiCache Valkey - seguridad (sesiones bff-web, jti DPoP, lista de denegacion)",prod,1 shard x 3 nodos cache.m7g.large en 3 AZ,"0,1264 USD/h nodo",[V] Price List 2026-10-14,277,0.2
+Datos,"Kinesis Data Streams on-demand (cdc-movimientos, auditoria)",prod,2 streams; ~280 GB de entrada; 2 consumidores,"0,04 USD/stream-h; 0,08 USD/GB entrada; 0,04 USD/GB lectura",[V] Price List 2026-09-11,105,0.8
+Datos,AWS DMS CDC (dms.r6i.large Multi-AZ),prod,1 instancia leyendo el log de la replica del Core,"0,353 USD/h",[V] Price List 2026-09-11,270,0
+Datos,Data Firehose a S3 (Parquet),prod,160 GB/mes de auditoria,"0,029 USD/GB + conversion de formato",[V] ingesta / [E] conversion,10,1
+Datos,"S3 (auditoria 12 m caliente + Deep Archive 10 anos, evidencias KYC, SPA, logs)",prod,auditoria ~32 GB/mes Parquet; KYC ~90 GB/mes; logs exportados,"0,023 USD/GB Standard; ~0,00099 USD/GB Deep Archive",[V] Standard / [E] Deep Archive,120,0.8
+Datos,Athena + Glue Data Catalog,prod,"~2 TB escaneados/mes (auditor, conciliacion)",5 USD/TB,[V] Price List 2026-09-11,15,0.5
+Mensajeria,EventBridge (bus bp-dominio) + Pipes,prod,~140 M eventos/mes (120 M MovimientoRegistrado); 120 M por Pipes,"1,00 USD/M eventos; 0,40 USD/M Pipes",[V] Price List 2026-09-24,188,1
+Mensajeria,"SQS (colas por consumidor, DLQ, tareas de saga)",prod,~300 M solicitudes (con lotes),"0,40 USD/M",[V] Price List 2026-09-11,120,1
+Mensajeria,Step Functions Standard (saga interbancaria),prod,"960 mil ejecuciones x 12 transiciones = 11,5 M","0,025 USD/1.000 transiciones",[V] Price List 2026-09-11,288,1
+Red,Direct Connect - 2 puertos dedicados 1 Gbps (ubicaciones distintas),prod,2 x 730 h,"0,30 USD/h por puerto 1G",[V] Price List,438,0
+Red,Direct Connect - transferencia de salida,prod,~2 TB/mes hacia on-premise,"0,02 USD/GB",[V] Price List,40,1
+Red,VPN IPsec sobre DX (private IP VPN) + VPN de respaldo por Internet,prod,2 + 2 conexiones,"0,05 USD/h conexion",[V] Price List 2026-10-16,146,0
+Red,Transit Gateway (us-east-1),prod,~8 adjuntos + ~4 TB procesados (egress centralizado cobra TGW dos veces),"0,05 USD/h adjunto; 0,02 USD/GB",[V] Price List 2026-10-16,372,0.5
+Red,"AWS Network Firewall (egress centralizado, 3 AZ)",prod,3 endpoints + ~500 GB,"0,395 USD/h endpoint; 0,065 USD/GB",[V] pagina publica,898,0.1
+Red,NAT Gateway (3 AZ) - exento por Network Firewall en la misma ruta,prod,solo IPv4 publicas (3),"hora y GB de NAT exentos con NFW; IPv4 publica ~0,005 USD/h",[V] pagina publica NFW,11,0
+Red,Transferencia a Internet del egress,prod,~500 GB/mes,"~0,09 USD/GB",[E],45,1
+Red,Transferencia entre AZ,prod,~5-7 TB/mes,"0,01 USD/GB por sentido",[E],150,1
+Red,Route 53 Resolver endpoints salientes (DNS hibrido) us-east-1,prod,2 ENI,"0,125 USD/h por ENI",[E],183,0
+Red,VPC Interface Endpoints (PrivateLink),prod,14 endpoints x 3 AZ + ~2 TB,"0,01 USD/h por AZ; 0,01 USD/GB",[V] hora / [E] GB,327,0.2
+Red,Transferencia entre regiones us-east-1 a us-east-2,prod,"~0,5 TB/mes (Aurora, DynamoDB, S3 CRR)","~0,02 USD/GB",[E],10,1
+Seguridad,AWS KMS,prod,~50 llaves (incluye replicas multi-region) + ~50 M simetricas + 5 M asimetricas,"1 USD/llave-mes; 0,03 USD/10k; 0,15 USD/10k asimetricas",[V] Price List 2026-09-11,275,0.8
+Seguridad,Secrets Manager,prod,~60 secretos con replica + 10 M llamadas (con cache),"0,40 USD/secreto; 0,05 USD/10k",[V] Price List 2026-09-11,100,0.3
+Seguridad,"GuardDuty (CloudTrail, VPC/DNS, Runtime ECS, S3)",prod,"20 M eventos CloudTrail, ~600 GB de flujo/DNS, 40 vCPU Fargate","0,000004 USD/evento; ~1 USD/GB flujo; 1,5 USD/vCPU-mes",[V] eventos y vCPU / [E] flujo,700,0.8
+Seguridad,Security Hub (CSPM) + AWS Config,prod,"cuentas prod, network, security-tooling, log-archive; Config con registro periodico diario para AWS::ECS::Task* y ENI",por control evaluado / por item de configuracion,[E],650,0.2
+Seguridad,Inspector (ECR) + Macie (buckets KYC y auditoria) + Detective,prod,450 imagenes/mes; ~100 GB muestreados,"0,09 USD/imagen; ~1 USD/GB",[E],370,0.3
+Seguridad,AWS Private CA modo vida corta (Service Connect),prod,1 CA + ~1.000 certificados/mes,"50 USD/CA-mes; 0,058 USD/certificado",[V] Price List 2026-09-11,108,0.3
+Seguridad,CloudTrail eventos de datos + Route 53 Resolver DNS Firewall,prod,20 M eventos de datos; 50 M consultas DNS,"0,10 USD/100k; 0,60 USD/M",[E],50,0.8
+Observabilidad,"CloudWatch Logs (aplicacion, API Gateway)",prod,"~700 GB/mes ingeridos (clase Standard), retencion 30-90 dias","0,50 USD/GB ingesta; 0,03 USD/GB-mes",[V] Price List 2026-10-07,395,1
+Observabilidad,"Logs vendidos (VPC Flow, WAF) a S3",prod,~1 TB/mes,"~0,25 USD/GB entregado a S3",[E],250,1
+Observabilidad,"CloudWatch metricas, alarmas, Application Signals (SLO)",prod,"~1.500 metricas, 300 alarmas, SLO por journey","0,30 USD/metrica; 0,10 USD/alarma",[E],650,0.5
+Observabilidad,X-Ray (OpenTelemetry) trazas,prod,~13 M trazas (10 % + 100 % errores/lentas),~5 USD/M trazas almacenadas,[E] (capa gratuita 100k [V]),75,1
+Observabilidad,"CloudWatch Synthetics (7 journeys, 2 regiones)",prod,~230 mil ejecuciones/mes,"0,0012 USD/ejecucion",[V] Price List 2026-10-07,300,0
+Observabilidad,"CloudWatch RUM (SPA, muestreo 25 %)",prod,~12 M eventos,~1 USD/100k eventos,[E],120,1
+Observabilidad,Amazon Managed Grafana,prod,10 editores + 40 lectores,9 USD/editor; 5 USD/lector,[V] Price List 2026-09-11,290,0
+Observabilidad,Logs del Lambda authorizer,prod,"120 M invocaciones, registros minimos","0,50 USD/GB",[E],30,1
+Observabilidad,AWS FIS (experimentos trimestrales),prod,~4.000 accion-minuto/trimestre,"~0,10 USD/accion-minuto",[E],15,0
+DR,ECS Fargate ARM64 a capacidad minima,dr,"Tier 1: 8 servicios x 2 tareas; Tier 2: 6 x 1 (22 tareas, 32 vCPU / 64 GB)",mismo precio que us-east-1,[E] us-east-2 = us-east-1,922,0
+DR,Aurora Global secundaria svc-transferencias (1 db.r8g.large) + almacenamiento,dr,1 instancia en la region secundaria,"0,276 USD/h",[E] us-east-2 = us-east-1,222,0
+DR,Aurora Global secundaria de plataforma headless (sin instancias; se agrega una al conmutar),dr,solo almacenamiento replicado,"0,10 USD/GB-mes",[E],10,0
+DR,DynamoDB Global Tables (replicas),dr,130 M rWRU + ~650 GB,"0,625 USD/M rWRU; 0,25 USD/GB-mes",[V] Price List,250,0.9
+DR,"ElastiCache Global Datastore (cluster de seguridad, 2 nodos); cluster de datos frio",dr,2 x cache.m7g.large,"0,1264 USD/h",[E],185,0
+DR,Kinesis en espera + S3 CRR destino,dr,2 streams on-demand + ~150 GB/mes replicados,"0,04 USD/stream-h",[E],95,0.5
+DR,"Red DR (TGW, Network Firewall 2 AZ, endpoints 2 AZ, NAT exento)",dr,"4 adjuntos TGW, 2 endpoints NFW, 14 x 2 endpoints",ver capa Red,[E],990,0
+DR,Private IP VPN sobre DX + VPN por Internet propias del TGW us-east-2,dr,4 conexiones,"~0,05 USD/h conexion",[E],100,0
+DR,Route 53 Resolver endpoints salientes us-east-2,dr,2 ENI,"0,125 USD/h por ENI",[E],182,0
+DR,AWS Backup - boveda logically air-gapped (cuenta backup-vault),dr,"Aurora 200 GB, DynamoDB 650 GB, copias cross-account/region",por GB-mes,[E],200,0.5
+DR,API Gateway / ALB / WAF regional en DR,dr,desplegados sin trafico (pago por uso),-,[E],40,0
+DR,Seguridad y observabilidad en us-east-2,dr,"GuardDuty, Config, Security Hub, logs y metricas de bajo volumen",-,[E],350,0.2
+Seguridad,CONDICIONAL - AWS Private CA de proposito general para mTLS hacia on-prem (si no se usa la PKI de BP),condicional,1 CA por region,400 USD/CA-mes,[V] Price List 2026-09-11,800,0
